@@ -1,0 +1,8 @@
+Brand,Model,Length,Height,Optional#,Mandatory#,Limit_horizontal,Limit_middle
+BMW,X3,4771,1372,7,3,4775,4779
+Chevrolet,Camaro,4893,1500,14,2,4903,4946
+Ford,F-150,4587,1432,11,2,4818,4788
+Ford,Mustang,4577,1453,2,1,4962,4813
+Honda,Accord,5233,1925,10,8,5849,5614
+Honda,CR-V,4737,1893,4,1,5025,4986
+Toyota,Corolla,4643,1489,15,8,4734,4957

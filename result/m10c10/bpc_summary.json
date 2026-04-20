@@ -1,0 +1,9 @@
+{
+  "best_objective": null,
+  "best_theta": null,
+  "explored_nodes": 50,
+  "generated_columns": 120,
+  "total_columns_in_pool": 130,
+  "use_dominance": true,
+  "use_cuts": false
+}
