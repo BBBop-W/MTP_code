@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from src.model.labeling import LayerPattern
+from model.BPC.labeling import LayerPattern
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-from src.model.labeling import LayerSpec
+from model.BPC.labeling import LayerSpec
 from src.utility.config import config as Config
 
 

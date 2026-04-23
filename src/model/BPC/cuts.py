@@ -5,7 +5,7 @@ from itertools import combinations
 from math import floor
 from typing import Dict, List, Tuple
 
-from src.model.labeling import CutEvaluator, DualValues, LayerSpec
+from model.BPC.labeling import CutEvaluator, DualValues, LayerSpec
 
 
 @dataclass(frozen=True)

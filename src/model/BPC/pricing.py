@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from src.model.cuts import CutState, SimpleCutEvaluator
-from src.model.labeling import DualValues, HierarchicalBSEvaluator, LabelingOptions, LayerPattern, generate_layer_patterns
-from src.model.layer_specs import LayerRunItem, build_layer_sequence
-from src.model.master import MasterLPSolution, MasterProblem, PatternColumn
-from src.model.merge import MergedPattern, merge_first_feasible
+from model.BPC.cuts import CutState, SimpleCutEvaluator
+from model.BPC.labeling import DualValues, HierarchicalBSEvaluator, LabelingOptions, LayerPattern, generate_layer_patterns
+from model.BPC.layer_specs import LayerRunItem, build_layer_sequence
+from model.BPC.master import MasterLPSolution, MasterProblem, PatternColumn
+from model.BPC.merge import MergedPattern, merge_first_feasible
 
 
 @dataclass

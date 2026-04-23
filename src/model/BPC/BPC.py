@@ -15,8 +15,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.model.master import MasterLPSolution, MasterProblem, PatternColumn
-from src.model.pricing import EarlyStopPricingEngine
+from model.BPC.master import MasterLPSolution, MasterProblem, PatternColumn
+from model.BPC.pricing import EarlyStopPricingEngine
 from src.utility.config import config as Config
 
 
