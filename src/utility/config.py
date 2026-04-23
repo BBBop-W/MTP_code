@@ -17,8 +17,8 @@ class config:
 
     B_height = 2100.0
     C_height = 2270.0
-    E_height = 2070.0
 
+    E_height = 2070.0
     D_height_h = 2070.0
     D_height_m = 1720.0
 
