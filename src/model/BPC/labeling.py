@@ -45,6 +45,8 @@ class BSResult:
     reachable_types: Optional[Set[int]] = None
 
 
+
+
 class BSEvaluator(Protocol):
     def evaluate(self, layer: LayerSpec, quantities: Dict[int, int]) -> BSResult:
         """Return feasibility and best loading length for a partial pattern."""
@@ -76,7 +78,17 @@ class LayerPattern:
     shape_params: Dict[str, object]
 
 
-from model.BPC.feasibility_check import BSComponent, HierarchicalBSEvaluator
+import sys
+from pathlib import Path
+
+# Setup path
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from src.model.BPC.feasibility_check import HierarchicalBSEvaluator
 
 
 def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -> bool:

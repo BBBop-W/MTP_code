@@ -8,19 +8,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
-import gurobipy as gp
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from model.BPC.master import MasterLPSolution, MasterProblem, PatternColumn
-from model.BPC.pricing import EarlyStopPricingEngine
+from src.model.BPC.CG import MasterLPSolution, MasterProblem, PatternColumn, ColumnGenerationEngine
+from src.model.BPC.pricing import EarlyStopPricingEngine
 from src.utility.config import config as Config
-
-
-PricingHook = Callable[[MasterLPSolution, MasterProblem], List[PatternColumn]]
 
 # IDE debug switches.
 # 0 = False, 1 = True.
@@ -37,13 +33,11 @@ RUN_OUTPUT_DIR = "result"
 RUN_MAX_NODES = 5000
 RUN_MAX_CG_ITERS = 3000
 
-
 @dataclass
 class BBNode:
     node_id: int
     depth: int
     branch_bounds: Dict[str, Tuple[float | None, float | None]] = field(default_factory=dict)
-
 
 @dataclass
 class BPCResult:
@@ -51,7 +45,6 @@ class BPCResult:
     best_theta: Dict[str, float] | None
     explored_nodes: int
     generated_columns: int
-
 
 def normalize_car_table(cars_path: Path) -> pd.DataFrame:
     car_info = pd.read_csv(cars_path)
@@ -76,18 +69,13 @@ def normalize_car_table(cars_path: Path) -> pd.DataFrame:
     return car_info
 
 
-class BPCSolver:
-    """Branch-Price-and-Cut scaffold for MLP-IC.
-
-    This file provides the algorithm entry and BB tree maintenance.
-    Pricing subproblem is intentionally left as a pluggable hook.
-    """
+class BBTree:
+    """Branch-and-Bound tree maintenance for MLP-IC."""
 
     def __init__(
         self,
         instance_dir: Path,
         output_root: Path,
-        pricing_hook: PricingHook | None = None,
         max_nodes: int = 200,
         max_cg_iters: int = 100,
         log_to_console: bool = True,
@@ -111,100 +99,42 @@ class BPCSolver:
         self.master = MasterProblem(car_info=car_info, carriage_num=carriage_num)
         self.master.seed_initial_columns()
 
-        self.pricing_hook = pricing_hook
         self.pricing_engine = EarlyStopPricingEngine(
             use_dominance=use_dominance,
             use_cuts=use_cuts,
             verbose=print_subproblem_progress,
-            logger=self._log_subproblem,
         )
+        self.cg_engine = ColumnGenerationEngine(
+            master=self.master,
+            pricing_engine=self.pricing_engine,
+            max_cg_iters=max_cg_iters,
+            log_to_console=print_subproblem_progress
+        )
+
         self.max_nodes = max_nodes
-        self.max_cg_iters = max_cg_iters
         self.log_to_console = log_to_console
         self.print_bb_progress = print_bb_progress
-        self.print_subproblem_progress = print_subproblem_progress
 
         self.best_obj: float | None = None
         self.best_theta: Dict[str, float] | None = None
-        self.generated_columns = 0
 
     def _log_bb(self, msg: str) -> None:
         if self.print_bb_progress:
-            print(f"[BPC] {msg}")
-
-    def _log_subproblem(self, msg: str) -> None:
-        if self.print_subproblem_progress:
-            print(f"[SP] {msg}")
-
-    def _pricing(self, lp_solution: MasterLPSolution) -> List[PatternColumn]:
-        # Integration point:
-        # 1) Build layer specs for each compartment/deck configuration.
-        # 2) Call labeling.generate_layer_patterns(...) for each layer.
-        # 3) Merge upper/lower layer patterns into full wagon columns.
-        # 4) Return only columns with negative reduced cost.
-        if self.pricing_hook is not None:
-            return self.pricing_hook(lp_solution, self.master)
-        return self.pricing_engine.generate_columns(lp_solution, self.master)
-
-    def _column_generation(self, node: BBNode) -> MasterLPSolution:
-        self._log_bb(f"Start CG at node={node.node_id}, depth={node.depth}, columns={len(self.master.columns)}")
-        last_solution = self.master.solve_lp(
-            branch_bounds=node.branch_bounds,
-            time_limit=Config.timelimit,
-            log_to_console=self.log_to_console,
-        )
-        if last_solution.objective is None:
-            self._log_bb(f"Node={node.node_id} RMP solve failed, status={last_solution.status}")
-            return last_solution
-
-        self._log_bb(f"Node={node.node_id} initial RMP objective={last_solution.objective:.6f}")
-
-        for it in range(1, self.max_cg_iters + 1):
-            new_columns = self._pricing(last_solution)
-            if not new_columns:
-                self._log_bb(f"Node={node.node_id} CG iter={it}: no new column, stop")
-                break
-
-            added = 0
-            for col in new_columns:
-                if col.column_id not in self.master.columns:
-                    self.master.add_column(col)
-                    self.generated_columns += 1
-                    added += 1
-                    self._log_bb(f"Node={node.node_id} add column={col.column_id}, cost={col.cost:.3f}, q_sum={sum(col.q.values())}")
-
-            if added == 0:
-                self._log_bb(f"Node={node.node_id} CG iter={it}: generated columns were duplicates, stop")
-                break
-
-            last_solution = self.master.solve_lp(
-                branch_bounds=node.branch_bounds,
-                time_limit=Config.timelimit,
-                log_to_console=self.log_to_console,
-            )
-            if last_solution.objective is None:
-                self._log_bb(f"Node={node.node_id} CG iter={it}: RMP resolve failed, status={last_solution.status}")
-                break
-            self._log_bb(f"Node={node.node_id} CG iter={it}: RMP objective={last_solution.objective:.6f}, added={added}")
-
-        return last_solution
+            print(f"[BB] {msg}")
 
     def solve(self) -> BPCResult:
         node_counter = 0
         queue: deque[BBNode] = deque([BBNode(node_id=node_counter, depth=0)])
         explored = 0
 
-        self._log_bb(
-            f"Start solve: max_nodes={self.max_nodes}, max_cg_iters={self.max_cg_iters}, "
-            f"dominance={self.pricing_engine.options.use_dominance}, cuts={self.pricing_engine.options.use_cuts}"
-        )
+        self._log_bb(f"Start solve: max_nodes={self.max_nodes}")
 
         while queue and explored < self.max_nodes:
             node = queue.popleft()
             explored += 1
             self._log_bb(f"Explore node={node.node_id}, depth={node.depth}, queue_left={len(queue)}")
 
-            lp_solution = self._column_generation(node)
+            lp_solution = self.cg_engine.solve(branch_bounds=node.branch_bounds)
             if lp_solution.objective is None:
                 self._log_bb(f"Node={node.node_id} skipped due to invalid LP status={lp_solution.status}")
                 continue
@@ -253,10 +183,10 @@ class BPCSolver:
             best_objective=self.best_obj,
             best_theta=self.best_theta,
             explored_nodes=explored,
-            generated_columns=self.generated_columns,
+            generated_columns=self.cg_engine.generated_columns,
         )
 
-        with open(self.output_dir / "bpc_summary.json", "w", encoding="utf-8") as f:
+        with open(self.output_dir / "bb_summary.json", "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "best_objective": result.best_objective,
@@ -264,8 +194,6 @@ class BPCSolver:
                     "explored_nodes": result.explored_nodes,
                     "generated_columns": result.generated_columns,
                     "total_columns_in_pool": len(self.master.columns),
-                    "use_dominance": self.pricing_engine.options.use_dominance,
-                    "use_cuts": self.pricing_engine.options.use_cuts,
                 },
                 f,
                 ensure_ascii=False,
@@ -274,12 +202,10 @@ class BPCSolver:
 
         return result
 
-
 def main() -> None:
-    solver = BPCSolver(
-        instance_dir=Path(RUN_INSTANCE_DIR),
-        output_root=Path(RUN_OUTPUT_DIR),
-        pricing_hook=None,
+    solver = BBTree(
+        instance_dir=PROJECT_ROOT / RUN_INSTANCE_DIR,
+        output_root=PROJECT_ROOT / RUN_OUTPUT_DIR,
         max_nodes=RUN_MAX_NODES,
         max_cg_iters=RUN_MAX_CG_ITERS,
         log_to_console=bool(DBG_LOG_TO_CONSOLE),
@@ -291,11 +217,10 @@ def main() -> None:
     result = solver.solve()
 
     if bool(DBG_PRINT_SUMMARY):
-        print("BPC scaffold finished.")
+        print("BBTree finished.")
         print(f"explored_nodes: {result.explored_nodes}")
         print(f"generated_columns: {result.generated_columns}")
         print(f"best_objective: {result.best_objective}")
-
 
 if __name__ == "__main__":
     main()
