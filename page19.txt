@@ -1,0 +1,69 @@
+Proposition 2.(Dominance rule) LetL1
+v= (c1
+v,Q1
+v, ℓ1
+v,W1
+v)andL2
+v=
+(c2
+v,Q2
+v, ℓ2
+v,W2
+v)represent two labels associated with different paths from depot
+oto automobilev. ThenL1
+vdominatesL2
+vif and only if (i) c1
+v≤c2
+v, (ii)
+Q1
+v⪯ Q2
+v, (iii)ℓ1
+v≤ℓ2
+v, (iv)W1
+v⊇ W2
+vand (v)L1
+v̸=L2
+v.
+The proof is relegated to Appendix F.
+4.3. Merging
+In the pricing subproblem, the sub-pattern generation demonstrates com-
+putational superiority in labeling algorithms by decoupling upper and lower
+compartments as well as deck position dependencies. Computational complex-
+ity analysis reveals an exponential relationship between wagon capacity and
+algorithm runtime, with a halving of capacity yielding super-linear time sav-
+ings. However, a challenge remains in consolidating loading sub-patterns, which
+can be effectively addressed by the following merging procedure.
+In general, a complete patternr∈ ˜Rwith deck positionp∈ Pis consoli-
+dated by merging pairsω 1andω 2, whereω 1∈Ωp
+upandω 2∈Ωp
+low. Sub-patterns
+within each class are sorted by ascending reduced cost cωto prioritize patterns
+with negative reduced costs. A consolidated patternr∈ Ris validated only if
+the following conditions hold:
+ω1∈Ωp
+up, ω2∈Ωp
+low,∀p∈ P,(23)
+¯cω1+ ¯cω2<0,(24)
+qω1
+i+qω2
+i≤C i+D i,∀i∈ I.(25)
+Constraints (24)-(25) enforce two critical conditions for merging sub-pattern
+pairs with identical deck positions: (i) the complete pattern must yield a nega-
+tive reduced cost, and (ii) the loaded automobile quantities do not exceed the
+inventory level. Sub-pattern pairs satisfying the above conditions are enumer-
+ated and then merged. If no qualifying sub-patterns satisfy the merging criteria,
+thentheCGprocessterminates. Otherwise, validpatternsareincorporatedinto
+the RMP to iteratively tighten the lower bound.
+4.4. Valid inequalities
+To strengthen the RMP lower bound, we first observe that any subset of
+automobileI′⊆ Irequires a minimum number of wagons to satisfy its manda-
+tory demand. DenoteN was the maximum loading capacity of a wagon. Since
+each wagon can accommodate at mostN wautomobiles, at leastP
+i∈I′Di/Nw
+patterns must be selected for any subsetI′. Hence,
+X
+r∈˜Rϑr≥P
+i∈I′Di
+Nw
+,∀I′⊆ I.(26)
+18

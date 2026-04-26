@@ -17,7 +17,7 @@ DBG_LOG_TO_CONSOLE = 1
 DBG_PRINT_SUMMARY = 1
 
 # Runtime settings (edit directly when debugging).
-RUN_INSTANCE_DIR = "data/Instance/m10c10"
+RUN_INSTANCE_DIR = "data/Instance/m7c7"
 RUN_OUTPUT_DIR = "result"
 
 

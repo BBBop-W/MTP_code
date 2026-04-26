@@ -1,0 +1,83 @@
+--- VNS_cpp/Feasibility.h
++++ VNS_cpp/Feasibility.h
+@@ -51,6 +51,107 @@
+             return false; 
+         }
+     }
++    
++    // Strict discrete subset length checks to match Gurobi bounding exactly
++    double delta = spacing;
++    if (floor == 0) {
++        double h_d_left = (mode_left == 1) ? Config::D_height_m : Config::D_height_h;
++        double h_d_right = (mode_right == 1) ? Config::D_height_m : Config::D_height_h;
++        
++        double sum_E = 0, sum_D_L = 0, sum_D_R = 0;
++        for (int v_id : route) {
++            double h = p->GetVehicle(v_id)->height;
++            double l = p->GetVehicle(v_id)->length + delta;
++            if (h > h_d_left && h > h_d_right) {
++                sum_E += l;
++            } else if (h > h_d_left) {
++                sum_D_R += l; // Must go right (or E)
++            } else if (h > h_d_right) {
++                sum_D_L += l; // Must go left (or E)
++            } else {
++                // Can go anywhere, distribute greedily
++                if (sum_D_L + l <= Config::D_len + 1e-5) {
++                    sum_D_L += l;
++                } else if (sum_D_R + l <= Config::D_len + 1e-5) {
++                    sum_D_R += l;
++                } else {
++                    sum_E += l;
++                }
++            }
++        }
++        if (mode_left == 1 && sum_E + sum_D_L > Config::D_len + Config::E_len + delta + 1e-5) return false;
++        if (mode_right == 1 && sum_E + sum_D_R > Config::D_len + Config::E_len + delta + 1e-5) return false;
++        if (sum_E + sum_D_L + sum_D_R > 2*Config::D_len + Config::E_len - delta + 1e-5) return false;
++        
++    } else {
++        double h_a_left = (mode_left == 1) ? Config::A_height_m : Config::A_height_h;
++        double h_a_right = (mode_right == 1) ? Config::A_height_m : Config::A_height_h;
++        double h_b = Config.B_height;
++        
++        double sum_C = 0, sum_B_L = 0, sum_B_R = 0, sum_A_L = 0, sum_A_R = 0;
++        for (int v_id : route) {
++            double h = p->GetVehicle(v_id)->height;
++            double l = p->GetVehicle(v_id)->length + delta;
++            
++            if (h > h_b) {
++                sum_C += l;
++            } else if (h > h_a_left && h > h_a_right) {
++                if (sum_B_L + l <= Config::B_len + 1e-5) sum_B_L += l;
++                else sum_B_R += l;
++            } else if (h > h_a_left) {
++                if (sum_B_R + l <= Config::B_len + 1e-5) sum_B_R += l;
++                else if (sum_A_R + l <= Config::A_len + 1e-5) sum_A_R += l;
++                else sum_B_L += l; // Overflow
++            } else if (h > h_a_right) {
++                if (sum_B_L + l <= Config::B_len + 1e-5) sum_B_L += l;
++                else if (sum_A_L + l <= Config::A_len + 1e-5) sum_A_L += l;
++                else sum_B_R += l; // Overflow
++            } else {
++                // Fits anywhere
++                if (sum_A_L + l <= Config::A_len + 1e-5) sum_A_L += l;
++                else if (sum_A_R + l <= Config::A_len + 1e-5) sum_A_R += l;
++                else if (sum_B_L + l <= Config::B_len + 1e-5) sum_B_L += l;
++                else sum_B_R += l;
++            }
++        }
++        
++        if (mode_left == 1) {
++            if (sum_C + sum_B_L > Config::C_len + Config::B_len + delta + 1e-5) return false;
++            if (sum_C + sum_B_L + sum_A_L > Config::C_len + Config::B_len + Config::A_len + 1e-5) return false;
++        }
++        if (mode_right == 1) {
++            if (sum_C + sum_B_R > Config::C_len + Config::B_len + delta + 1e-5) return false;
++            if (sum_C + sum_B_R + sum_A_R > Config::C_len + Config::B_len + Config::A_len + 1e-5) return false;
++        }
++        if (sum_C + sum_B_L + sum_B_R + sum_A_L + sum_A_R > Config::C_len + 2*Config::B_len + 2*Config::A_len - delta + 1e-5) return false;
++    }
+ 
+     return true;
+ }

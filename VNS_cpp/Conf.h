@@ -2,7 +2,6 @@
 
 class Config {
 public:
-    static constexpr int carriage_num = 5;
     static constexpr double eps = 0.0001;
     static constexpr int timelimit = 30;
 

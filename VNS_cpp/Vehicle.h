@@ -24,12 +24,10 @@ public:
     }
 
     void UpdateParameter_Removing() {
-        if (var_mandatory > 0) {
-            var_mandatory += 1;
-        } else if (var_optional == num_optional - num_mandatory) {
-            var_mandatory += 1;
+        if (var_optional < num_optional) {
+            var_optional++;
         } else {
-            var_optional += 1;
+            var_mandatory++;
         }
     }
 };

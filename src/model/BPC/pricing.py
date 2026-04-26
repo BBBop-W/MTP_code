@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -14,6 +15,9 @@ from src.model.BPC.merge import MergedPattern, merge_first_feasible
 class PricingStats:
     generated_subpatterns: int = 0
     merge_attempt_pairs: int = 0
+    labeling_time: float = 0.0
+    bs_time: float = 0.0
+    merge_time: float = 0.0
 
 
 class EarlyStopPricingEngine:
@@ -63,7 +67,13 @@ class EarlyStopPricingEngine:
             f"gamma={lp_solution.dual_gamma:.6f}, use_cuts={self.options.use_cuts}, use_dominance={self.options.use_dominance}"
         )
 
-        duals = DualValues(alpha=lp_solution.dual_alpha, beta=lp_solution.dual_beta, gamma=lp_solution.dual_gamma)
+        duals = DualValues(
+            alpha=lp_solution.dual_alpha, 
+            beta=lp_solution.dual_beta, 
+            gamma=lp_solution.dual_gamma,
+            branch_a=lp_solution.dual_branch_a,
+            branch_q=lp_solution.dual_branch_q
+        )
         car_heights = {i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I}
         cut_evaluator = None
         if self.options.use_cuts:
@@ -81,9 +91,16 @@ class EarlyStopPricingEngine:
             max_units_per_type=self.options.max_units_per_type,
         )
 
+        # Reset timers
+        self.stats.labeling_time = 0.0
+        self.stats.bs_time = 0.0
+        self.stats.merge_time = 0.0
+
         subpatterns: Dict[Tuple[str, str], List[LayerPattern]] = {}
         for item in sequence:
             self._log(f"Solve subproblem: deck={item.deck}, compartment={item.compartment}, layer={item.layer.layer_id}")
+            
+            t0 = time.time()
             patterns = generate_layer_patterns(
                 layer=item.layer,
                 duals=duals,
@@ -91,6 +108,14 @@ class EarlyStopPricingEngine:
                 options=self.options,
                 cut_evaluator=cut_evaluator,
             )
+            t_lab = time.time() - t0
+            self.stats.labeling_time += t_lab
+            
+            # Extract BS time collected inside HierarchicalBSEvaluator
+            self.stats.bs_time += self.bs.accumulated_time
+            self.stats.labeling_time -= self.bs.accumulated_time # Remove BS time from pure labeling time
+            self.bs.accumulated_time = 0.0 # reset
+
             self.stats.generated_subpatterns += len(patterns)
             self._log(f"Subproblem done: layer={item.layer.layer_id}, patterns={len(patterns)}")
             subpatterns[(item.deck, item.compartment)] = patterns
@@ -99,12 +124,15 @@ class EarlyStopPricingEngine:
             if item.compartment != "lower":
                 continue
 
+            t0 = time.time()
             merged = self._try_merge_pair(
                 deck=item.deck,
                 upper_patterns=subpatterns.get((item.deck, "upper"), []),
                 lower_patterns=patterns,
                 max_total_by_type=master.U,
             )
+            self.stats.merge_time += (time.time() - t0)
+
             if merged is None:
                 self._log(f"Merging failed for deck={item.deck}, continue next pair")
                 continue

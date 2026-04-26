@@ -1,0 +1,20 @@
+{
+  "best_objective": -225250.0,
+  "best_theta": {
+    "seed_i1": 0,
+    "seed_i2": 0,
+    "seed_i3": 0,
+    "seed_i4": 0,
+    "seed_i5": 0,
+    "cg_h-h_1": 2,
+    "cg_h-h_2": 0,
+    "cg_h-h_3": 0,
+    "cg_h-h_4": 0,
+    "cg_h-h_5": 2,
+    "cg_h-h_6": 0,
+    "cg_h-h_7": 1
+  },
+  "explored_nodes": 1,
+  "generated_columns": 7,
+  "total_columns_in_pool": 12
+}

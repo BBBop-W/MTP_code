@@ -1,0 +1,35 @@
+Page 1, Line 8: •Tailored branch-price-and-cut algorithm with multiple enhancement tech-
+Page 2, Line 22: cut algorithm with deck-specific pricing and merging subproblems, enhanced
+Page 2, Line 30: irregular geometry, continuous placement, branch-price-and-cut.
+Page 6, Line 14: duced. These failure modes translate into systematic idle capacity. An audit
+Page 6, Line 16: reveals substantial idle capacity (excluding inter-automobile clearance): up to
+Page 6, Line 29: often sacrifice capacity—for example, replacing one or two slightly larger auto-
+Page 7, Line 38: built upon the branch-price-and-cut (BPC) framework, is developed by
+Page 8, Line 36: work that considers some subset of these aspects as outlined in Table 1.
+Page 12, Line 20: of wagon sides. We define the following component subsets:
+Page 14, Line 16: exceed the maximum loading capacity. Constraints (4) enforce that the loading
+Page 15, Line 32: to identify a subset of patterns (columns) that optimize the objective function,
+Page 19, Line 31: ity analysis reveals an exponential relationship between wagon capacity and
+Page 19, Line 32: algorithm runtime, with a halving of capacity yielding super-linear time sav-
+Page 19, Line 57: To strengthen the RMP lower bound, we first observe that any subset of
+Page 19, Line 59: tory demand. DenoteN was the maximum loading capacity of a wagon. Since
+Page 19, Line 62: patterns must be selected for any subsetI′. Hence,
+Page 20, Line 0: This inequality is known in the literature as a rounded capacity inequality
+Page 20, Line 2: required to accommodate any subset of mandatory demand.
+Page 20, Line 3: We also incorporate subset-row inequalities originally developed for VRP
+Page 20, Line 17: Applying a1/2-Chvátal–Gomory rounding to these constraints for any sub-
+Page 20, Line 26: nantly load multiple automobiles within the same subset. A pattern contributes
+Page 20, Line 34: σcbe the duals associated with the rounded-capacity and subset-row cuts, re-
+Page 22, Line 21: randomly removing a subset of automobiles, and (ii) altering the deck positions
+Page 28, Line 4: cognitive capacity of manual scheduling in real-world operations.
+Page 29, Line 18: atically dominate quantity-oriented ones in terms of effective capacity usage,
+Page 30, Line 9: Bruni, M., Crainic, T.G., Perboli, G., 2024. Bin packing methodologies for capacity planning
+Page 30, Line 15: Costa, L., Contardo, C., Desaulniers, G., 2019. Exact branch-price-and-cut algorithms for
+Page 30, Line 17: Côté, J.F., Dell’Amico, M., Iori, M., 2014a. Combinatorial benders’ cuts for the strip packing
+Page 30, Line 24: Crainic, T.G., Gobbato, L., Perboli, G., Rei, W., 2016. Logistics capacity planning: A
+Page 31, Line 13: Silva, A., Coelho, L.C., Darvish, M., Renaud, J., 2022. A cutting plane method and a parallel
+Page 31, Line 18: Zhang, X., Chen, L., Gendreau, M., Langevin, A., 2022a. A branch-and-price-and-cut algo-
+Page 32, Line 8: Table A.5.Loading capacity of JSQ6 wagon.
+Page 35, Line 0: 2025). In this ecosystem, a substantial subset of firms are directly engaged in
+Page 35, Line 16: wagon capacity.
+Page 46, Line 53: Yang, Y., 2023. An exact price-cut-and-enumerate method for the capacitated multitrip

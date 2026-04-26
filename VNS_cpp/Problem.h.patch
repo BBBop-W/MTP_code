@@ -1,0 +1,25 @@
+--- VNS_cpp/Problem.h
++++ VNS_cpp/Problem.h
+@@ -88,6 +88,22 @@
+         }
+         fout.close();
+     }
++
++    struct VehicleState {
++        int var_mandatory;
++        int var_optional;
++    };
++    std::vector<VehicleState> BackupState() {
++        std::vector<VehicleState> state(vehicle_types);
++        for (int i = 0; i < vehicle_types; ++i) {
++            state[i] = {vehicle[i].var_mandatory, vehicle[i].var_optional};
++        }
++        return state;
++    }
++    void RestoreState(const std::vector<VehicleState>& state) {
++        for (int i = 0; i < vehicle_types; ++i) {
++            vehicle[i].var_mandatory = state[i].var_mandatory;
++            vehicle[i].var_optional = state[i].var_optional;
++        }
++    }
+ };

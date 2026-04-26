@@ -13,8 +13,9 @@ public:
     int mandatory_sum;
     int optional_sum;
     std::string instance_name;
+    int carriage_num;
 
-    Problem() : vehicle_types(0), mandatory_sum(0), optional_sum(0), instance_name("") {}
+    Problem() : vehicle_types(0), mandatory_sum(0), optional_sum(0), instance_name(""), carriage_num(0) {}
 
     Vehicle* GetVehicle(int id) {
         for (int i = 0; i < vehicle_types; ++i) {
@@ -70,6 +71,23 @@ public:
         }
         vehicle_types = i;
         fin.close();
+
+        std::string carriage_file = "../data/Instance/" + file_name + "/carriage.csv";
+        std::ifstream c_fin(carriage_file);
+        if (c_fin.is_open()) {
+            std::string c_line;
+            std::getline(c_fin, c_line); // Skip header
+            if (std::getline(c_fin, c_line)) {
+                std::stringstream c_ss(c_line);
+                std::string c_item;
+                if (std::getline(c_ss, c_item, ',')) {
+                    carriage_num = std::stoi(c_item);
+                }
+            }
+            c_fin.close();
+        } else {
+            carriage_num = 5; // Fallback
+        }
     }
 
     void Summarize(const std::string& dir_path) {
@@ -79,5 +97,25 @@ public:
             fout << v.brand << "," << v.model << "," << (v.num_mandatory - v.var_mandatory + v.num_optional - v.var_optional) << "\n";
         }
         fout.close();
+    }
+
+    struct VehicleState {
+        int var_mandatory;
+        int var_optional;
+    };
+
+    std::vector<VehicleState> BackupState() {
+        std::vector<VehicleState> state(vehicle_types);
+        for (int i = 0; i < vehicle_types; ++i) {
+            state[i] = {vehicle[i].var_mandatory, vehicle[i].var_optional};
+        }
+        return state;
+    }
+
+    void RestoreState(const std::vector<VehicleState>& state) {
+        for (int i = 0; i < vehicle_types; ++i) {
+            vehicle[i].var_mandatory = state[i].var_mandatory;
+            vehicle[i].var_optional = state[i].var_optional;
+        }
     }
 };

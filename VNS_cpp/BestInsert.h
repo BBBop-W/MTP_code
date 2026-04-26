@@ -27,15 +27,20 @@ public:
         });
 
         for (auto v : vnode) {
-            for (int k = 0; k < v->var_mandatory; ++k) {
+            while (v->var_mandatory > 0) {
+                bool inserted = false;
                 for (auto c : cnode) {
                     BestRouteResult best_insert = BestToRoute(*c, v, p);
                     if (best_insert.best_place == -1) continue;
                     InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor);
                     v->var_mandatory -= 1;
-                    v->var_optional -= 1;
                     result.CalculateSolutionObj(p);
+                    inserted = true;
                     break;
+                }
+                if (!inserted) {
+                    // Cannot insert all mandatory vehicles!
+                    return false;
                 }
             }
         }
@@ -48,13 +53,19 @@ public:
         });
 
         for (auto v : vnode) {
-            for (int k = 0; k < v->var_optional; ++k) {
+            while (v->var_optional > 0) {
+                bool inserted = false;
                 for (auto c : cnode) {
                     BestRouteResult best_insert = BestToRoute(*c, v, p);
                     if (best_insert.best_place == -1) continue;
                     InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor);
                     v->var_optional -= 1;
                     result.CalculateSolutionObj(p);
+                    inserted = true;
+                    break;
+                }
+                if (!inserted) {
+                    // It's okay if we can't insert all optional vehicles. Just stop for this vehicle type.
                     break;
                 }
             }
@@ -63,7 +74,7 @@ public:
     }
 
     Solution* Solve(Problem* p) {
-        Solution* result = new Solution();
+        Solution* result = new Solution(p->carriage_num);
         bool success = Construct(*result, p);
         if (!success) {
             std::cout << "Cannot generate the feasible solution!" << std::endl;

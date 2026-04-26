@@ -1,0 +1,29 @@
+{
+  "best_objective": -279996.0,
+  "best_theta": {
+    "seed_i1": 0,
+    "seed_i2": 0,
+    "seed_i3": 0,
+    "seed_i4": 0,
+    "seed_i5": 0,
+    "seed_i6": 0,
+    "BI_1": 0,
+    "BI_2": 0,
+    "BI_3": 0,
+    "BI_4": 0,
+    "BI_5": 0,
+    "VNS_1": 0,
+    "VNS_2": 0,
+    "VNS_3": 6,
+    "VNS_4": 0,
+    "VNS_5": 0
+  },
+  "explored_nodes": 1,
+  "generated_columns": 0,
+  "total_columns_in_pool": 16,
+  "master_solve_time": 0.011584997177124023,
+  "pricing_total_time": 0.7460360527038574,
+  "labeling_time": 0.05296683311462402,
+  "feasibility_check_time": 0.4958348274230957,
+  "merge_time": 0.19658327102661133
+}

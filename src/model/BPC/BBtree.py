@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,8 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from src.model.BPC.CG import MasterLPSolution, MasterProblem, PatternColumn, ColumnGenerationEngine
 from src.model.BPC.pricing import EarlyStopPricingEngine
@@ -22,13 +25,13 @@ from src.utility.config import config as Config
 # 0 = False, 1 = True.
 DBG_LOG_TO_CONSOLE = 0
 DBG_USE_DOMINANCE = 1
-DBG_USE_CUTS = 0
+DBG_USE_CUTS = 1
 DBG_PRINT_BB_PROGRESS = 1
 DBG_PRINT_SUBPROBLEM_PROGRESS = 0
 DBG_PRINT_SUMMARY = 1
 
 # Runtime settings (edit directly when debugging).
-RUN_INSTANCE_DIR = "data/Instance/m10c10"
+RUN_INSTANCE_DIR = "data/Instance/m7c7"
 RUN_OUTPUT_DIR = "result"
 RUN_MAX_NODES = 5000
 RUN_MAX_CG_ITERS = 3000
@@ -37,7 +40,8 @@ RUN_MAX_CG_ITERS = 3000
 class BBNode:
     node_id: int
     depth: int
-    branch_bounds: Dict[str, Tuple[float | None, float | None]] = field(default_factory=dict)
+    branch_a_bounds: Dict[int, Tuple[float | None, float | None]] = field(default_factory=dict)
+    branch_q_bounds: Dict[int, Tuple[float | None, float | None]] = field(default_factory=dict)
 
 @dataclass
 class BPCResult:
@@ -118,66 +122,79 @@ class BBTree:
         self.best_obj: float | None = None
         self.best_theta: Dict[str, float] | None = None
 
-    def _log_bb(self, msg: str) -> None:
-        if self.print_bb_progress:
-            print(f"[BB] {msg}")
-
     def solve(self) -> BPCResult:
         node_counter = 0
         queue: deque[BBNode] = deque([BBNode(node_id=node_counter, depth=0)])
         explored = 0
 
-        self._log_bb(f"Start solve: max_nodes={self.max_nodes}")
+        if self.print_bb_progress:
+            print(f"[BB] Start solve: max_nodes={self.max_nodes}")
+            print(f"{'Node':>6}  {'Depth':>6}  {'Left':>6}  {'Current Bound':>14}  {'Best Incumbent':>14}  {'Time(s)':>8}")
+
+        start_time = time.time()
 
         while queue and explored < self.max_nodes:
             node = queue.popleft()
             explored += 1
-            self._log_bb(f"Explore node={node.node_id}, depth={node.depth}, queue_left={len(queue)}")
 
-            lp_solution = self.cg_engine.solve(branch_bounds=node.branch_bounds)
+            lp_solution = self.cg_engine.solve(
+                branch_a_bounds=node.branch_a_bounds, 
+                branch_q_bounds=node.branch_q_bounds
+            )
+            
+            elapsed = time.time() - start_time
+            
             if lp_solution.objective is None:
-                self._log_bb(f"Node={node.node_id} skipped due to invalid LP status={lp_solution.status}")
+                if self.print_bb_progress:
+                    best_str = f"{self.best_obj:.2f}" if self.best_obj is not None else "-"
+                    print(f"{node.node_id:6d}  {node.depth:6d}  {len(queue):6d}  {'Infeasible':>14}  {best_str:>14}  {elapsed:8.2f}")
                 continue
+
+            current_bound = lp_solution.objective
+            best_str = f"{self.best_obj:.2f}" if self.best_obj is not None else "-"
+            
+            if self.print_bb_progress:
+                print(f"{node.node_id:6d}  {node.depth:6d}  {len(queue):6d}  {current_bound:14.2f}  {best_str:>14}  {elapsed:8.2f}")
 
             # Bounding by incumbent
             if self.best_obj is not None and lp_solution.objective >= self.best_obj - 1e-6:
-                self._log_bb(
-                    f"Node={node.node_id} fathomed by bound: obj={lp_solution.objective:.6f} >= best={self.best_obj:.6f}"
-                )
                 continue
 
             if self.master.is_integral(lp_solution):
                 if self.best_obj is None or lp_solution.objective < self.best_obj:
                     self.best_obj = lp_solution.objective
                     self.best_theta = {k: round(v) for k, v in lp_solution.theta_values.items()}
-                    self._log_bb(f"Node={node.node_id} found new incumbent: obj={self.best_obj:.6f}")
-                else:
-                    self._log_bb(f"Node={node.node_id} integral but not improving")
                 continue
 
-            # Branch on first fractional theta_r
+            # Branch on chosen a or q variable
             branch_var = self.master.choose_branch_var(lp_solution)
             if branch_var is None:
-                self._log_bb(f"Node={node.node_id} fractional expected but no branch var found")
                 continue
-            col_id, value = branch_var
+                
+            b_type, car_type, value = branch_var
             floor_v = math.floor(value)
             ceil_v = math.ceil(value)
-            self._log_bb(f"Node={node.node_id} branch on {col_id}={value:.6f} -> <= {floor_v} and >= {ceil_v}")
 
-            left_bounds = dict(node.branch_bounds)
-            old_left = left_bounds.get(col_id, (None, None))
-            left_bounds[col_id] = (old_left[0], floor_v)
+            left_a = dict(node.branch_a_bounds)
+            left_q = dict(node.branch_q_bounds)
+            right_a = dict(node.branch_a_bounds)
+            right_q = dict(node.branch_q_bounds)
 
-            right_bounds = dict(node.branch_bounds)
-            old_right = right_bounds.get(col_id, (None, None))
-            right_bounds[col_id] = (ceil_v, old_right[1])
+            if b_type == 'a':
+                old_left = left_a.get(car_type, (None, None))
+                left_a[car_type] = (old_left[0], floor_v)
+                old_right = right_a.get(car_type, (None, None))
+                right_a[car_type] = (ceil_v, old_right[1])
+            else:
+                old_left = left_q.get(car_type, (None, None))
+                left_q[car_type] = (old_left[0], floor_v)
+                old_right = right_q.get(car_type, (None, None))
+                right_q[car_type] = (ceil_v, old_right[1])
 
             node_counter += 1
-            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_bounds=left_bounds))
+            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_a_bounds=left_a, branch_q_bounds=left_q))
             node_counter += 1
-            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_bounds=right_bounds))
-            self._log_bb(f"Create children nodes {node_counter-1} and {node_counter}")
+            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_a_bounds=right_a, branch_q_bounds=right_q))
 
         result = BPCResult(
             best_objective=self.best_obj,
@@ -194,6 +211,11 @@ class BBTree:
                     "explored_nodes": result.explored_nodes,
                     "generated_columns": result.generated_columns,
                     "total_columns_in_pool": len(self.master.columns),
+                    "master_solve_time": self.cg_engine.stats.master_time,
+                    "pricing_total_time": self.cg_engine.stats.pricing_time,
+                    "labeling_time": self.cg_engine.stats.labeling_time,
+                    "feasibility_check_time": self.cg_engine.stats.bs_time,
+                    "merge_time": self.cg_engine.stats.merge_time,
                 },
                 f,
                 ensure_ascii=False,
@@ -214,13 +236,23 @@ def main() -> None:
         print_bb_progress=bool(DBG_PRINT_BB_PROGRESS),
         print_subproblem_progress=bool(DBG_PRINT_SUBPROBLEM_PROGRESS),
     )
+    
+    t0 = time.time()
     result = solver.solve()
+    total_time = time.time() - t0
 
     if bool(DBG_PRINT_SUMMARY):
-        print("BBTree finished.")
-        print(f"explored_nodes: {result.explored_nodes}")
-        print(f"generated_columns: {result.generated_columns}")
-        print(f"best_objective: {result.best_objective}")
+        print("\n--- BBTree Finished ---")
+        print(f"Explored Nodes     : {result.explored_nodes}")
+        print(f"Generated Columns  : {result.generated_columns}")
+        print(f"Best Objective     : {result.best_objective}")
+        print("\n--- Time Profiling ---")
+        print(f"Total BBTree Time  : {total_time:.2f} s")
+        print(f"Master Solve Time  : {solver.cg_engine.stats.master_time:.2f} s")
+        print(f"Pricing Total Time : {solver.cg_engine.stats.pricing_time:.2f} s")
+        print(f"  ├─ Labeling Time : {solver.cg_engine.stats.labeling_time:.2f} s")
+        print(f"  ├─ Feas Check BS : {solver.cg_engine.stats.bs_time:.2f} s")
+        print(f"  └─ Merging Time  : {solver.cg_engine.stats.merge_time:.2f} s")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,3 @@
+run m6c6
+bt
+quit

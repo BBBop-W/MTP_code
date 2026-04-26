@@ -1,0 +1,13 @@
+--- Neighborhoods.h
++++ Neighborhoods.h
+@@ -28,6 +28,10 @@
+         if (!EraseVehicle(result.carriage[c1_id], old_place, p, old_floor)) {
+             return false;
+         }
++        
++        if (actual_new_place > result.carriage[c2_id].route[new_floor].size()) {
++            printf("CRITICAL BUG: actual_new_place=%d, size=%zu\n", actual_new_place, result.carriage[c2_id].route[new_floor].size());
++        }
+         
+         if (!InsertCustomer(result.carriage[c2_id], vehicle, actual_new_place, p, false, new_floor)) {
+             InsertCustomer(result.carriage[c1_id], vehicle, old_place, p, false, old_floor);

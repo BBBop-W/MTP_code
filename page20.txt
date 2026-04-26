@@ -1,0 +1,50 @@
+This inequality is known in the literature as a rounded capacity inequality
+(Balster et al., 2023), which directly enforces the minimum number of wagons
+required to accommodate any subset of mandatory demand.
+We also incorporate subset-row inequalities originally developed for VRP
+models, where each customer must be visited at most once. However, our RMP
+does not impose this restriction. We therefore adapt these inequalities to only
+consider patterns whose load exceeds half of the total available quantity for a
+given automobile. For each automobileiand patternr, we define the indicator:
+δi(r) =(
+1,ifqr
+i>(C i+D i)/2,
+0,otherwise,(27)
+so thatδ i(r) = 1marks a pattern that alone loads more than half of the total
+available quantity of automobilei. Since no feasible integer solution can include
+two such patterns for the same automobile, the following inequities hold:
+X
+r∈˜Rδi(r)ϑ r≤1,∀i∈ I.(28)
+Applying a1/2-Chvátal–Gomory rounding to these constraints for any sub-
+setI′⊆ Iwith|I′|= 3yields the 3-SR inequalities,
+X
+r∈˜R$
+1
+2X
+i∈I′δi(r)%
+ϑr≤1,∀I′⊆ I,|I′|= 3.(29)
+These inequalities restrict the simultaneous selection of patterns that domi-
+nantly load multiple automobiles within the same subset. A pattern contributes
+coefficient 1 precisely when it dominantly loads at least two of the three au-
+tomobiles, and the inequality prevents two such patterns from being selected
+together. Because⌊1
+2Pδi(r)⌋dependsontheloadingdecisionsproducedbythe
+pricing subproblem, theseinequalities alterthe pricingstructure andrequire the
+labeling algorithm to maintain an additional resource.
+Let(α,β, γ)denote the dual variables of the original RMP, and letη cand
+σcbe the duals associated with the rounded-capacity and subset-row cuts, re-
+spectively. The reduced cost of a patternrbecomes
+cr=
+cr−X
+i∈Iqr
+i(αi+βi)−γ−X
+c∈CRCCηc
+−X
+c∈CSRCσc1
+2X
+i∈I′
+cδi(r),(30)
+where the first term represents the standard reduced cost, and the second term
+accounts for dominant-load restrictions through the resource tracked in the
+pricing algorithm.
+19

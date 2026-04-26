@@ -204,8 +204,14 @@ def _simple_check_layer_bs(
     if len(cars) > 8:
         return None
 
-    mode_left = deck_mode.split("-")[0]
-    mode_right = deck_mode.split("-")[1]
+    if "-" in deck_mode:
+        mode_left = deck_mode.split("-")[0]
+        mode_right = deck_mode.split("-")[1]
+    else:
+        m = "h" if deck_mode == "horizontal" else "m"
+        mode_left = m
+        mode_right = m
+
     delta = 400.0
 
     # Pi = 1 表示 MIDDLE 模式 (中间有限高折损)，Pi = 0 表示 HORIZONTAL (平放)
@@ -333,9 +339,13 @@ class HierarchicalBSEvaluator:
     """Simplified 2^N Search Evaluator for maximum 8 cars.
     Wrapper to match the labeling.py API logic.
     """
+    def __init__(self):
+        self.accumulated_time = 0.0
 
     def evaluate(self, layer: 'LayerSpec', quantities: Dict[int, int]) -> 'BSResult':
         from src.model.BPC.labeling import BSResult
+        import time
+        t0 = time.time()
         
         mode = layer.shape_params.get("deck", "h-h")
         compartment = layer.shape_params.get("compartment", "lower")
@@ -370,8 +380,10 @@ class HierarchicalBSEvaluator:
                 if probe_res is not None:
                     reachable.add(t)
                     
+            self.accumulated_time += (time.time() - t0)
             return BSResult(feasible=True, best_length=res, reachable_types=reachable)
             
+        self.accumulated_time += (time.time() - t0)
         return BSResult(feasible=False, best_length=inf, reachable_types=set())
 
 

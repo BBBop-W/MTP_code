@@ -10,6 +10,10 @@ class DualValues:
     alpha: Dict[int, float]
     beta: Dict[int, float]
     gamma: float
+    branch_a: Dict[int, float] = field(default_factory=dict)
+    branch_q: Dict[int, float] = field(default_factory=dict)
+    branch_a: Dict[int, float] = field(default_factory=dict)
+    branch_q: Dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -43,8 +47,6 @@ class BSResult:
     best_length: float
     # Optional optimization: if BS can return forward-reachable nodes directly.
     reachable_types: Optional[Set[int]] = None
-
-
 
 
 class BSEvaluator(Protocol):
@@ -202,7 +204,17 @@ def generate_layer_patterns(
                 if options.use_cuts and cut_evaluator is not None and not cut_evaluator.is_feasible(layer, q_new):
                     continue
 
-                rc = lb.reduced_cost - (layer.car_lengths[car_type] + duals.alpha.get(car_type, 0.0) + duals.beta.get(car_type, 0.0)) * q
+                # Add alpha (mandatory), beta (optional), branch_q (qty per car type)
+                rc = lb.reduced_cost - (
+                    layer.car_lengths[car_type] + 
+                    duals.alpha.get(car_type, 0.0) + 
+                    duals.beta.get(car_type, 0.0) + 
+                    duals.branch_q.get(car_type, 0.0)
+                ) * q
+                
+                # Add branch_a (wagon existence for car type)
+                if q > 0:
+                    rc -= duals.branch_a.get(car_type, 0.0)
 
                 if options.use_cuts and cut_evaluator is not None:
                     rc += cut_evaluator.reduced_cost_shift(layer, q_new, duals)

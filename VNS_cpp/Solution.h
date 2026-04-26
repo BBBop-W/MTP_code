@@ -14,7 +14,13 @@ public:
     double actual_length;
 
     Solution() {
-        carriage_num = Config::carriage_num;
+        carriage_num = 0;
+        obj = 0;
+        actual_length = 0;
+    }
+
+    Solution(int num) {
+        carriage_num = num;
         carriage.resize(carriage_num);
         for (int i = 0; i < carriage_num; ++i) {
             carriage[i].id = i;
@@ -55,6 +61,7 @@ public:
         carriage_num = origin.carriage_num;
         carriage.resize(carriage_num);
         for (int i = 0; i < carriage_num; ++i) {
+            carriage[i].id = i;
             carriage[i].copy_construct(origin.carriage[i]);
         }
     }
@@ -64,7 +71,7 @@ public:
         fout << "{\n    \"carriage\": [\n";
         for (size_t i = 0; i < carriage.size(); ++i) {
             fout << "        {\n";
-            fout << "            \"position\": \"" << (carriage[i].position == 0 ? "horizontal" : "middle") << "\",\n";
+            fout << "            \"position\": \"" << (carriage[i].mode_left == 0 ? "h" : "m") << "-" << (carriage[i].mode_right == 0 ? "h" : "m") << "\",\n";
             
             fout << "            \"top\": [\n";
             for (size_t j = 0; j < carriage[i].route[0].size(); ++j) {
