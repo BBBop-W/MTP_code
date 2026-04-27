@@ -341,6 +341,7 @@ class HierarchicalBSEvaluator:
     """
     def __init__(self):
         self.accumulated_time = 0.0
+        self._cache = {}
 
     def evaluate(self, layer: 'LayerSpec', quantities: Dict[int, int]) -> 'BSResult':
         from src.model.BPC.labeling import BSResult
@@ -352,6 +353,11 @@ class HierarchicalBSEvaluator:
         
         # Cleanup zero quantities
         clean_q = {i: q for i, q in quantities.items() if q > 0}
+        
+        cache_key = (compartment, mode, tuple(sorted(clean_q.items())))
+        if cache_key in self._cache:
+            self.accumulated_time += (time.time() - t0)
+            return self._cache[cache_key]
         
         res = _recurse_check_layer_bs(
             compartment=compartment,
@@ -370,6 +376,13 @@ class HierarchicalBSEvaluator:
                     continue
                 probe = dict(clean_q)
                 probe[t] = probe.get(t, 0) + 1
+                
+                probe_key = (compartment, mode, tuple(sorted(probe.items())))
+                if probe_key in self._cache:
+                    if self._cache[probe_key].feasible:
+                        reachable.add(t)
+                    continue
+
                 probe_res = _recurse_check_layer_bs(
                     compartment=compartment,
                     deck_mode=mode,
@@ -379,12 +392,18 @@ class HierarchicalBSEvaluator:
                 )
                 if probe_res is not None:
                     reachable.add(t)
+                    # We can't cache probe fully as BSResult since we don't know its reachable set yet,
+                    # but we can cache feasibility. We'll just rely on main cache for full hits.
                     
+            bs_result = BSResult(feasible=True, best_length=res, reachable_types=reachable)
+            self._cache[cache_key] = bs_result
             self.accumulated_time += (time.time() - t0)
-            return BSResult(feasible=True, best_length=res, reachable_types=reachable)
+            return bs_result
             
+        bs_result = BSResult(feasible=False, best_length=inf, reachable_types=set())
+        self._cache[cache_key] = bs_result
         self.accumulated_time += (time.time() - t0)
-        return BSResult(feasible=False, best_length=inf, reachable_types=set())
+        return bs_result
 
 
 def check_layer_bs(

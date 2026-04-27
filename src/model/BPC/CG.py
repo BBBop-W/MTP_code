@@ -232,12 +232,12 @@ class MasterProblem:
                     q_sums[i] += q_ir * theta_val
 
         for i in self.I:
-            if abs(q_sums[i] - round(q_sums[i])) > eps:
-                return 'q', i, q_sums[i]
-
-        for i in self.I:
             if abs(a_sums[i] - round(a_sums[i])) > eps:
                 return 'a', i, a_sums[i]
+
+        for i in self.I:
+            if abs(q_sums[i] - round(q_sums[i])) > eps:
+                return 'q', i, q_sums[i]
 
         return None
     def is_integral(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:

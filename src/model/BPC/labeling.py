@@ -197,7 +197,16 @@ def generate_layer_patterns(
                 q_new = dict(lb.quantities)
                 q_new[car_type] = q
 
-                bs_result = bs.evaluate(layer, q_new)
+                total_cars = sum(q_new.values())
+                length_sum = sum(layer.car_lengths[c] * qty for c, qty in q_new.items())
+                
+                # Check if the entire group fits inside the central undivided region (E for upper, C for lower)
+                safe_len = 14900.0 if layer.shape_params.get("compartment", "lower") == "upper" else 12400.0
+                if length_sum + 400.0 * total_cars <= safe_len:
+                    bs_result = BSResult(feasible=True, best_length=length_sum, reachable_types=set(ordered_types))
+                else:
+                    bs_result = bs.evaluate(layer, q_new)
+                    
                 if not bs_result.feasible:
                     continue
 

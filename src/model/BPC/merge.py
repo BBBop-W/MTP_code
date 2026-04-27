@@ -38,7 +38,9 @@ def merge_first_feasible(
     2) If invalid, iterate remaining pairs until found or exhausted.
     3) Validity checks:
        - merged reduced cost < 0 (if enabled)
-       - quantity sum by type <= max_total_by_type
+       - We RELAX the quantity sum by type check here. The Restricted Master Problem 
+         already has U_i constraints, so it will naturally ignore or restrict columns 
+         that over-use a car type. Removing this check significantly speeds up merge!
     """
 
     if not upper_patterns or not lower_patterns:
@@ -58,14 +60,11 @@ def merge_first_feasible(
         if u_deck and l_deck and u_deck != l_deck:
             continue
 
-        # Verify quantities don't exceed the total max for the vehicle
-        merged_q = _merge_quantities(u.quantities, l.quantities)
-        if any(merged_q.get(t, 0) > max_total_by_type.get(t, 0) for t in merged_q):
-            continue
-
         rc = u.reduced_cost + l.reduced_cost
         if require_negative_reduced_cost and rc >= -1e-5:
             continue
+
+        merged_q = _merge_quantities(u.quantities, l.quantities)
 
         deck = u_deck if u_deck else l_deck
         return MergedPattern(deck=deck, quantities=merged_q, reduced_cost=rc, upper=u, lower=l)
