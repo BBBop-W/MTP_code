@@ -95,21 +95,24 @@ public:
     void GenerateColumnCSV(Problem* p, const std::string& dir_path) {
         std::ofstream fout(dir_path + "/column.csv");
         fout << "brand,model";
+        // Header for decoupled layers
         for (int i = 0; i < carriage_num; ++i) {
-            fout << "," << (i + 1);
+            fout << "," << (i + 1) << "_upper," << (i + 1) << "_lower";
         }
         fout << "\n";
         
         for (const auto& v : p->vehicle) {
             fout << v.brand << "," << v.model;
             for (int i = 0; i < carriage_num; ++i) {
-                int count = 0;
-                for (int f = 0; f < 2; ++f) {
-                    for (int id : carriage[i].route[f]) {
-                        if (id == v.id) count++;
-                    }
+                int count_upper = 0;
+                for (int id : carriage[i].route[0]) {
+                    if (id == v.id) count_upper++;
                 }
-                fout << "," << count;
+                int count_lower = 0;
+                for (int id : carriage[i].route[1]) {
+                    if (id == v.id) count_lower++;
+                }
+                fout << "," << count_upper << "," << count_lower;
             }
             fout << "\n";
         }

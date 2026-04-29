@@ -29,15 +29,13 @@ bool EraseVehicle(Carriage& c, int place, Problem* p, int floor = 0) {
     if (c.length(floor) == 0) {
         return false;
     }
-    int v_id = c.route[floor][place];
-    c.route[floor].erase(c.route[floor].begin() + place);
-    if (IsFeasible(c, p)) {
-        c.CalculateCarriageObj(p);
-        return true;
-    } else {
-        c.route[floor].insert(c.route[floor].begin() + place, v_id);
+    if (place < 0 || place >= c.route[floor].size()) {
         return false;
     }
+    int v_id = c.route[floor][place];
+    c.route[floor].erase(c.route[floor].begin() + place);
+    c.CalculateCarriageObj(p);
+    return true;
 }
 
 struct BestRouteResult {

@@ -87,9 +87,10 @@ public:
         
         // Remove cars greedily from the ends if infeasible
         for (int f : {0, 1}) {
-            while (!c.route[f].empty() && !IsFeasible_Floor(c.route[f], p, c.mode_left, c.mode_right, f, c.spacing)) {
-                // If left side changed, we might want to remove from the left (index 0).
-                // If right side changed, remove from right (index size-1).
+            while (!c.route[f].empty()) {
+                if (IsFeasible_Floor(c.route[f], p, c.mode_left, c.mode_right, f, c.spacing)) {
+                    break;
+                }
                 int remove_idx = (side == 0) ? 0 : c.route[f].size() - 1;
                 int v_id = c.route[f][remove_idx];
                 EraseVehicle(c, remove_idx, p, f);
@@ -249,8 +250,7 @@ public:
             }
         }
         
-        std::random_device rd;
-        std::mt19937 g(rd());
+        std::mt19937& g = get_generator();
         std::shuffle(moves.begin(), moves.end(), g);
         
         for (const auto& move : moves) {
@@ -283,8 +283,7 @@ public:
             }
         }
         
-        std::random_device rd;
-        std::mt19937 g(rd());
+        std::mt19937& g = get_generator();
         std::shuffle(moves.begin(), moves.end(), g);
         
         for (const auto& move : moves) {
@@ -317,8 +316,7 @@ public:
             }
         }
         
-        std::random_device rd;
-        std::mt19937 g(rd());
+        std::mt19937& g = get_generator();
         std::shuffle(moves.begin(), moves.end(), g);
         
         for (const auto& move : moves) {

@@ -12,27 +12,26 @@
 bool RuinRebuild(Solution& result, int strength, Problem* p) {
     Solution old;
     old.copy_construct(result);
-    
-    std::random_device rd;
-    std::mt19937 generator(rd());
-    
+
+    std::mt19937& generator = get_generator();
+
     Neighborhoods Ns;
-    
+
     // 1. Randomly alter deck positions
     int num_repos = std::min(strength / 2 + 1, result.carriage_num / 2);
     if (num_repos < 1) num_repos = 1;
-    
+
     std::vector<int> carriages(result.carriage_num);
     std::iota(carriages.begin(), carriages.end(), 0);
     std::shuffle(carriages.begin(), carriages.end(), generator);
-    
+
     for (int i = 0; i < num_repos; ++i) {
         int r = carriages[i];
         int side = generator() % 2; // 0 for left, 1 for right
         Ns.Reposition(result, r, side, p);
     }
-    
-    // 2. Randomly remove a subset of vehicles  
+
+    // 2. Randomly remove a subset of vehicles
     int num_remove = strength * 2; 
     int removed = 0;
     std::shuffle(carriages.begin(), carriages.end(), generator);
@@ -56,13 +55,13 @@ bool RuinRebuild(Solution& result, int strength, Problem* p) {
         }
         if (removed >= num_remove) break;
     }
-    
+
     // 3. Re-insert using BestInsert
     BestInsert bi;
     if (bi.Construct(result, p)) {
         return true;
     }
-    
+
     // If it fails to insert all mandatory vehicles, revert
     result.copy_construct(old);
     // Revert vehicle states to match the old solution

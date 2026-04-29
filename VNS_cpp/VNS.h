@@ -27,32 +27,37 @@ public:
         if (!success) {
             std::cout << "ERROR!!! -- Cannot generate feasible initial solution via BestInsert Method!" << std::endl;
         }
-        bool changed = RandomVNDBest(result, p);
+        auto tic = std::chrono::steady_clock::now();
+        bool changed = RandomVNDBest(result, p, tic, 0.0);
         return {changed, result};
     }
 
-    bool RandomVNDBest(Solution& result, Problem* p) {
+    bool RandomVNDBest(Solution& result, Problem* p, std::chrono::steady_clock::time_point global_tic, double last_improve_time) {
         bool overall_changed = false;
         bool changed = true;
         Neighborhoods ns;
-        // 0=RelocateBest, 1=SwapBest, 2=OptBest, 3=RelocateRandom, 4=SwapRandom, 5=OptRandom
-        std::vector<int> method = {0, 1, 2, 3, 4, 5};
+        // Only use Random (First Improvement) operators to heavily speed up the search for large instances
+        // 3=RelocateRandom, 4=SwapRandom, 5=OptRandom
+        std::vector<int> method = {3, 4, 5};
         
-        std::random_device rd;
-        std::mt19937 g(rd());
+        auto vnd_tic = std::chrono::steady_clock::now();
         
         while (changed) {
+            auto toc = std::chrono::steady_clock::now();
+            double global_duration = std::chrono::duration<double>(toc - global_tic).count();
+            if (global_duration > Config::timelimit || (global_duration - last_improve_time) > Config::non_improve_timelimit) {
+                break; // Hard abort if global time limit or non-improve limit reached
+            }
+            double vnd_duration = std::chrono::duration<double>(toc - vnd_tic).count();
+            if (vnd_duration > 15.0) {
+                break; // Hard abort to prevent single VND local search from taking too long
+            }
+
             changed = false;
-            std::shuffle(method.begin(), method.end(), g);
+            std::shuffle(method.begin(), method.end(), get_generator());
             for (int m = 0; m < method.size(); ++m) {
                 bool flag = false;
-                if (method[m] == 0) {
-                    flag = ns.InterRelocateBest(result, p);
-                } else if (method[m] == 1) {
-                    flag = ns.InterSwapBest(result, p);
-                } else if (method[m] == 2) {
-                    flag = ns.InterOptBest(result, p);
-                } else if (method[m] == 3) {
+                if (method[m] == 3) {
                     flag = ns.InterRelocateRandom(result, p);
                 } else if (method[m] == 4) {
                     flag = ns.InterSwapRandom(result, p);
@@ -87,7 +92,8 @@ public:
 
         Solution global_best;
         global_best.copy_construct(result);
-        RandomVNDBest(global_best, p);
+        double last_improve_time = 0.0;
+        RandomVNDBest(global_best, p, tic, last_improve_time);
         
         Solution incumbent;
         incumbent.copy_construct(global_best);
@@ -102,7 +108,11 @@ public:
             auto toc = std::chrono::steady_clock::now();
             double duration = std::chrono::duration<double>(toc - tic).count();
             if (duration > Config::timelimit) {
-                std::cout << "\tTime limit reached (" << Config::timelimit << "s)." << std::endl;
+                std::cout << "\tOverall time limit reached (" << Config::timelimit << "s)." << std::endl;
+                break;
+            }
+            if (duration - last_improve_time > Config::non_improve_timelimit) {
+                std::cout << "\tMax time without improvement reached (" << Config::non_improve_timelimit << "s)." << std::endl;
                 break;
             }
             
@@ -112,15 +122,14 @@ public:
             // Dynamic strength based on nonImprove to diversify more when stuck
             int strength = 1 + (nonImprove / 10); 
             bool success = RuinRebuild(shaken, strength, p);
-            
             if (success) {
-                RandomVNDBest(shaken, p);
                 
                 if (shaken.obj > incumbent.obj + Config::eps) {
                     incumbent.copy_construct(shaken);
                     if (incumbent.obj > global_best.obj + Config::eps) {
                         global_best.copy_construct(incumbent);
                         nonImprove = 0;
+                        last_improve_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - tic).count();
                         std::cout << "\tIter " << total_iters << " | New Global Best VNS_Obj: " << global_best.obj << " | Actual Length: " << global_best.actual_length << std::endl;
                     } else {
                         nonImprove++;
@@ -130,6 +139,9 @@ public:
                 }
             } else {
                 nonImprove++;
+            }
+            
+            if (total_iters % 100 == 0) {
             }
         }
 

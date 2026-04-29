@@ -26,8 +26,8 @@ DBG_OVERWRITE = 1
 DBG_PRINT_SUMMARY = 1
 
 # Runtime settings (edit directly when debugging).
-RUN_MODELS = 11
-RUN_CARRIAGES = 11
+RUN_MODELS = 12
+RUN_CARRIAGES = 12
 RUN_SEED = None
 RUN_EXCEL = Path("data/raw data/尺寸整理.xlsx")
 RUN_OUTPUT_ROOT = Path("data/Instance")

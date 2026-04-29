@@ -38,7 +38,9 @@ int main(int argc, char* argv[]) {
         result->GenerateColumnCSV(&p, out_dir);
 
         VNS V;
-        auto res = V.Optimization(*result, &p, 20);
+        // Standard VNS often runs for 500-2000 iterations without improvement
+        // We set 500 here since we multiply by max(5, carriage_num) inside VNS
+        auto res = V.Optimization(*result, &p, 500);
         
         std::string vns_dir = "../result/" + p.instance_name + "/VNS";
         std::string cmd_vns = "mkdir -p " + vns_dir;

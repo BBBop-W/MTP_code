@@ -11,6 +11,8 @@ struct Region {
 
 inline bool IsFeasible_Floor(const std::vector<int>& route, Problem* p, int mode_left, int mode_right, int floor, int spacing) {
     if (route.empty()) return true;
+    // Limit car count to 8 to avoid 2^N explosion and match Python logic
+    if (route.size() > 8) return false;
 
     std::vector<Region> regions;
     double total_len = 0.0;

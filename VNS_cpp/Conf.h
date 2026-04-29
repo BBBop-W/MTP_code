@@ -1,9 +1,12 @@
+#include <random>
+inline std::mt19937& get_generator() { static thread_local std::mt19937 gen(42); return gen; }
 #pragma once
 
 class Config {
 public:
     static constexpr double eps = 0.0001;
-    static constexpr int timelimit = 30;
+    static constexpr int timelimit = 300; // Overall time limit
+    static constexpr int non_improve_timelimit = 120; // Max time without improvement
 
     static constexpr double A_len = 4300.0;
     static constexpr double B_len = 2000.0;
