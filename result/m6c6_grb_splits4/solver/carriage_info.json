@@ -1,0 +1,234 @@
+{
+  "carriage": [
+    {
+      "lower_central": {},
+      "lower_block_1_left": {
+        "河北长安各车型外廓尺寸-1025": 1.0
+      },
+      "lower_block_1_right": {},
+      "lower_block_2_left": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_2_right": {},
+      "lower_block_3_left": {},
+      "lower_block_3_right": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {},
+      "lower_block_6_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "lower_block_6_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_central": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "upper_block_1_left": {
+        "五菱-1029SPYA": 1.0
+      },
+      "upper_block_1_right": {
+        "五菱-1029SPYA": 1.0
+      },
+      "upper_block_2_left": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "upper_block_2_right": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {
+        "河北长安各车型外廓尺寸-1025": 1.0
+      },
+      "lower_block_2_right": {},
+      "lower_block_3_left": {},
+      "lower_block_3_right": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {},
+      "lower_block_6_left": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "lower_block_6_right": {
+        "五菱-1020NF": 2.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {
+        "五菱-1020NF": 2.0
+      },
+      "upper_block_1_right": {
+        "五菱-1020NF": 1.0
+      },
+      "upper_block_2_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_block_2_right": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {
+        "河北长安各车型外廓尺寸-1025": 1.0
+      },
+      "lower_block_2_right": {},
+      "lower_block_3_left": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_3_right": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {},
+      "lower_block_6_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "lower_block_6_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_central": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "upper_block_1_left": {},
+      "upper_block_1_right": {
+        "五菱-1020NF": 1.0
+      },
+      "upper_block_2_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 2.0
+      },
+      "upper_block_2_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {
+        "河北长安各车型外廓尺寸-1025": 2.0
+      },
+      "lower_block_2_right": {},
+      "lower_block_3_left": {},
+      "lower_block_3_right": {},
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "lower_block_6_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "lower_block_6_right": {},
+      "upper_central": {},
+      "upper_block_1_left": {},
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_block_2_right": {
+        "河北长安各车型外廓尺寸-1025": 3.0
+      },
+      "pi_left": 1,
+      "pi_right": 0
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {
+        "河北长安各车型外廓尺寸-1025": 1.0
+      },
+      "lower_block_2_right": {},
+      "lower_block_3_left": {},
+      "lower_block_3_right": {
+        "重庆渝安车型尺寸表-V27": 2.0
+      },
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {},
+      "lower_block_6_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "lower_block_6_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_central": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "upper_block_1_left": {
+        "五菱-1020NF": 1.0
+      },
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "重庆渝安车型尺寸表-赛力斯x1": 1.0
+      },
+      "upper_block_2_right": {
+        "重庆渝安车型尺寸表-赛力斯x1": 2.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {
+        "河北长安各车型外廓尺寸-1025": 1.0
+      },
+      "lower_block_3_left": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "lower_block_3_right": {},
+      "lower_block_4_left": {},
+      "lower_block_4_right": {},
+      "lower_block_5_left": {},
+      "lower_block_5_right": {},
+      "lower_block_6_left": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "lower_block_6_right": {
+        "五菱-1020NF": 2.0
+      },
+      "upper_central": {
+        "重庆渝安车型尺寸表-V27": 1.0
+      },
+      "upper_block_1_left": {
+        "五菱-1029SPYA": 1.0
+      },
+      "upper_block_1_right": {
+        "五菱-1029SPYA": 1.0
+      },
+      "upper_block_2_left": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "upper_block_2_right": {
+        "东风渝安-风光580新款": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    }
+  ]
+}

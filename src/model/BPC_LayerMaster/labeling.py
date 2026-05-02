@@ -90,7 +90,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC.feasibility_check import HierarchicalBSEvaluator
+from src.model.BPC_LayerMaster.feasibility_check import HierarchicalBSEvaluator
 
 
 def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -> bool:
@@ -201,7 +201,8 @@ def generate_layer_patterns(
                 length_sum = sum(layer.car_lengths[c] * qty for c, qty in q_new.items())
                 
                 # Check if the entire group fits inside the central undivided region (E for upper, C for lower)
-                safe_len = 14900.0 if layer.shape_params.get("compartment", "lower") == "upper" else 12400.0
+                # Updated to match the new dynamic_segmentation central physical absolute flat lengths
+                safe_len = 11400.0 if layer.shape_params.get("compartment", "lower") == "upper" else 10867.0
                 if length_sum + 400.0 * total_cars <= safe_len:
                     bs_result = BSResult(feasible=True, best_length=length_sum, reachable_types=set(ordered_types))
                 else:

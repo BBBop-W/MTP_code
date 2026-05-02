@@ -1,0 +1,164 @@
+{
+  "carriage": [
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {
+        "别克-别克GL8": 1.0
+      },
+      "lower_block_3_left": {},
+      "lower_block_3_right": {
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "lower_block_4_left": {
+        "福特-新福克斯": 1.0,
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "lower_block_4_right": {
+        "福特-新福克斯": 1.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_block_2_right": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 0
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {},
+      "lower_block_3_left": {
+        "别克-别克GL8": 1.0
+      },
+      "lower_block_3_right": {},
+      "lower_block_4_left": {
+        "长安系列（含河北.南京）-科赛3": 2.0
+      },
+      "lower_block_4_right": {
+        "福特-新福克斯": 2.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {},
+      "upper_block_1_right": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "upper_block_2_left": {
+        "本田-思域": 1.0,
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_block_2_right": {
+        "福特-新福克斯": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "lower_block_3_left": {},
+      "lower_block_3_right": {},
+      "lower_block_4_left": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0
+      },
+      "lower_block_4_right": {
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {},
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "本田-思域": 1.0,
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "upper_block_2_right": {
+        "福特-新福克斯": 1.0,
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "pi_left": 0,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "lower_block_3_left": {},
+      "lower_block_3_right": {},
+      "lower_block_4_left": {
+        "本田-思域": 1.0,
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "lower_block_4_right": {
+        "福特-新福克斯": 1.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_block_2_right": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    },
+    {
+      "lower_central": {},
+      "lower_block_1_left": {},
+      "lower_block_1_right": {},
+      "lower_block_2_left": {},
+      "lower_block_2_right": {
+        "东风渝安-V21（单排货箱2850）": 2.0
+      },
+      "lower_block_3_left": {},
+      "lower_block_3_right": {},
+      "lower_block_4_left": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0
+      },
+      "lower_block_4_right": {
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_central": {},
+      "upper_block_1_left": {},
+      "upper_block_1_right": {},
+      "upper_block_2_left": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0,
+        "长安系列（含河北.南京）-科赛3": 1.0
+      },
+      "upper_block_2_right": {
+        "福特-新福克斯": 1.0,
+        "本田-思域": 1.0
+      },
+      "pi_left": 1,
+      "pi_right": 1
+    }
+  ]
+}

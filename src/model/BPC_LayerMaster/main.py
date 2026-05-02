@@ -64,10 +64,16 @@ def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
                 
     print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix})")
 
-def run_bpc(instance_name: str, use_warmstart: bool = True):
+def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1, independent_mode_split: bool = True):
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
-    
+
+    # Pass dynamic split configuration to BPC's feasibility check
+    import src.model.BPC_LayerMaster.feasibility_check as feas
+    feas.GLOBAL_NUM_SPLITS = num_splits
+    feas.GLOBAL_INDEP_MODE = independent_mode_split
+    feas._SEGMENTS_CACHE.clear()
+
     if use_warmstart:
         print(f"--- 1. Running VNS (C++) for {instance_name} ---")
         vns_exe = PROJECT_ROOT / "VNS_cpp" / "vns_solver"
@@ -75,7 +81,7 @@ def run_bpc(instance_name: str, use_warmstart: bool = True):
             print(f"[Error] VNS executable not found at {vns_exe}. Compiling...")
             sys.exit(1)
         try:
-            subprocess.run([str(vns_exe), instance_name], cwd=str(PROJECT_ROOT / "VNS_cpp"), check=True)
+            subprocess.run([str(vns_exe), instance_name, str(num_splits), str(int(independent_mode_split))], cwd=str(PROJECT_ROOT / "VNS_cpp"), check=True)
         except subprocess.CalledProcessError as e:
             print(f"[Error] VNS execution failed: {e}")
             sys.exit(1)

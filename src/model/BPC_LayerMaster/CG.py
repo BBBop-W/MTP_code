@@ -150,14 +150,31 @@ class MasterProblem:
         )
 
         branch_q_constr = {}
-        # Note: We skip branch_a_bounds in layer formulation since 'a_i' means car is in *a wagon*, which is harder to define linearly for separated layers without linking variables.
-        # So we only enforce branch_q_bounds.
         for i, (lb, ub) in branch_q_bounds.items():
             expr = gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items())
             if lb is not None:
                 branch_q_constr[(i, 'lb')] = model.addConstr(expr >= lb, name=f"branch_q_lb_{i}")
             if ub is not None:
                 branch_q_constr[(i, 'ub')] = model.addConstr(expr <= ub, name=f"branch_q_ub_{i}")
+
+        sr_cuts_constr = {}
+        for cut_key in active_sr_cuts:
+            comp, subset = cut_key
+            # calculate coefficient for each column
+            expr = gp.LinExpr()
+            for cid, col in self.columns.items():
+                if col.compartment != comp:
+                    continue
+                val = 0
+                for i in subset:
+                    if col.q.get(i, 0) > 0:
+                        val += col.q[i]
+                coeff = math.floor(0.5 * val)
+                if coeff > 0:
+                    expr += coeff * theta[cid]
+            
+            # Subsets of 3 items can at most be picked 1 time collectively without exceeding limit if capacity rules apply
+            sr_cuts_constr[cut_key] = model.addConstr(expr <= 0.5, name=f"sr_cut_{comp}_{subset}")
 
         model.ModelSense = gp.GRB.MINIMIZE
         model.optimize()
@@ -183,6 +200,8 @@ class MasterProblem:
         for (i, bound_type), constr in branch_q_constr.items():
             dual_branch_q[i] += float(constr.Pi)
 
+        dual_sigma = {cut_key: float(constr.Pi) for cut_key, constr in sr_cuts_constr.items()}
+
         return MasterLPSolution(
             status=model.Status,
             objective=float(model.ObjVal),
@@ -191,10 +210,10 @@ class MasterProblem:
             dual_beta=dual_beta,
             dual_gamma=dual_gamma,
             dual_kappa=dual_kappa,
-            dual_branch_a={}, # Disabled for layer-based
+            dual_branch_a={}, 
             dual_branch_q=dual_branch_q,
             dual_eta=0.0,
-            dual_sigma={}
+            dual_sigma=dual_sigma
         )
 
     def choose_branch_var(self, solution: MasterLPSolution, eps: float = 1e-5) -> tuple[str, int, float] | None:

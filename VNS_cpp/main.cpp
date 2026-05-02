@@ -1,6 +1,7 @@
 #include "Problem.h"
 #include "BestInsert.h"
 #include "VNS.h"
+#include "Feasibility.h"
 #include <iostream>
 #include <cstdlib>
 #include <string>
@@ -10,6 +11,12 @@ int main(int argc, char* argv[]) {
     std::string instance_name = "m6c6"; // default
     if (argc > 1) {
         instance_name = argv[1];
+    }
+    if (argc > 2) {
+        GLOBAL_GEOM.num_splits = std::stoi(argv[2]);
+    }
+    if (argc > 3) {
+        GLOBAL_GEOM.independent_mode = (std::stoi(argv[3]) != 0);
     }
 
     Problem p;

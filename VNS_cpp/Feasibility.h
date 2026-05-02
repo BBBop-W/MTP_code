@@ -1,243 +1,274 @@
 #pragma once
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <set>
+#include <iostream>
 #include "Problem.h"
 #include "Carriage.h"
 #include "Conf.h"
 
-struct Region {
-    double start, end, height;
+struct DynamicSegment {
+    double length;
+    double h_h;
+    double h_m;
 };
+
+struct DynamicInterval {
+    int l_idx;
+    int r_idx;
+    double cap;
+};
+
+class DynamicGeometry {
+private:
+    std::vector<DynamicSegment> lower_blocks;
+    std::vector<DynamicSegment> upper_blocks;
+    std::vector<DynamicInterval> lower_intervals;
+    std::vector<DynamicInterval> upper_intervals;
+    
+    // Geometry math from Python dynamic_segmentation.py
+    double carriage_length = 25000.0;
+    double center_x = 12500.0;
+    double roof_height = 4340.0;
+    
+    double deck_h_height = 2270.0;
+    double deck_m_groove_length = 11400.0;
+    double deck_m_groove_start = 12500.0 - 5700.0;
+    double deck_m_end_height = 4340.0 - 1780.0;
+    
+    double floor_end_height = 680.0;
+    double floor_groove_length = 10867.0;
+    double floor_groove_start = 12500.0 - 5433.5;
+    double slope_ratio = std::tan(9.0 * M_PI / 180.0);
+    double floor_slope_start = (12500.0 - 5433.5) - (680.0 / std::tan(9.0 * M_PI / 180.0));
+
+    double _deck_height(double x, bool is_m) {
+        if (!is_m) return deck_h_height;
+        if (x >= deck_m_groove_start) return deck_h_height;
+        double ratio = x / deck_m_groove_start;
+        return deck_m_end_height - ratio * (deck_m_end_height - deck_h_height);
+    }
+    
+    double _floor_height(double x) {
+        if (x <= floor_slope_start) return floor_end_height;
+        if (x >= floor_groove_start) return 0.0;
+        return floor_end_height - (x - floor_slope_start) * slope_ratio;
+    }
+    
+    double get_clearance(double x, bool is_upper, bool is_m) {
+        if (x > center_x) x = carriage_length - x;
+        if (is_upper) return roof_height - _deck_height(x, is_m);
+        else return _deck_height(x, is_m) - _floor_height(x);
+    }
+    
+    double solve_x(double target_h, bool is_upper, bool is_m) {
+        double h_min = get_clearance(0, is_upper, is_m);
+        double h_max = get_clearance(center_x, is_upper, is_m);
+        if (target_h <= h_min + 0.1) return 0.0;
+        if (target_h > h_max + 0.1) return -1.0;
+        
+        double left = 0.0, right = center_x;
+        for (int i=0; i<50; ++i) {
+            double mid = (left + right) / 2.0;
+            if (get_clearance(mid, is_upper, is_m) < target_h) left = mid;
+            else right = mid;
+        }
+        return right;
+    }
+    
+    void build_layer(bool is_upper, const std::vector<double>& heights, int num_splits, bool indep) {
+        std::set<double> unique_h(heights.begin(), heights.end());
+        std::vector<double> h_vec(unique_h.begin(), unique_h.end());
+        std::sort(h_vec.begin(), h_vec.end());
+        
+        std::vector<double> sel_h;
+        if (num_splits > 0 && num_splits < h_vec.size()) {
+            for (int i=0; i<num_splits; ++i) {
+                int idx = std::round(i * (h_vec.size() - 1.0) / std::max(1, num_splits - 1));
+                if (num_splits == 1) idx = (h_vec.size() - 1) / 2; // match linspace 0 behavior for size 1
+                sel_h.push_back(h_vec[idx]);
+            }
+        } else {
+            sel_h = h_vec;
+        }
+        
+        double central_len = is_upper ? deck_m_groove_length : floor_groove_length;
+        double central_start_x = center_x - central_len / 2.0;
+        
+        std::vector<double> cut_points = {0.0, central_start_x};
+        for (double h : sel_h) {
+            double x_h = solve_x(h, is_upper, false);
+            if (x_h > 0 && x_h < central_start_x) cut_points.push_back(x_h);
+            if (indep) {
+                double x_m = solve_x(h, is_upper, true);
+                if (x_m > 0 && x_m < central_start_x) cut_points.push_back(x_m);
+            }
+        }
+        
+        std::sort(cut_points.begin(), cut_points.end());
+        auto last = std::unique(cut_points.begin(), cut_points.end(), [](double a, double b){ return std::abs(a-b)<0.01; });
+        cut_points.erase(last, cut_points.end());
+        
+        std::vector<DynamicSegment>& blocks = is_upper ? upper_blocks : lower_blocks;
+        blocks.clear();
+        
+        blocks.push_back({central_len, get_clearance(center_x, is_upper, false), get_clearance(center_x, is_upper, true)});
+        
+        for (int i = cut_points.size() - 1; i > 0; --i) {
+            double rx = cut_points[i];
+            double lx = cut_points[i-1];
+            if (rx - lx <= 0.01) continue;
+            blocks.push_back({rx - lx, get_clearance(lx, is_upper, false), get_clearance(lx, is_upper, true)});
+        }
+        
+        // Build intervals
+        std::vector<DynamicInterval>& intervals = is_upper ? upper_intervals : lower_intervals;
+        intervals.clear();
+        int N = blocks.size() - 1;
+        for (int l = 0; l <= N; ++l) {
+            for (int r = 0; r <= N; ++r) {
+                double mod = 400.0;
+                if (l == N && r == N) mod = -400.0;
+                else if (l == N || r == N) mod = 0.0;
+                
+                double cap = blocks[0].length + mod;
+                for (int i=1; i<=l; ++i) cap += blocks[i].length;
+                for (int i=1; i<=r; ++i) cap += blocks[i].length;
+                intervals.push_back({l, r, cap});
+            }
+        }
+    }
+
+public:
+    int num_splits = 1;
+    bool independent_mode = true;
+    bool initialized = false;
+    
+    void init(Problem* p) {
+        if (initialized) return;
+        std::vector<double> heights;
+        for (int i=0; i<p->vehicle_types; ++i) heights.push_back(p->vehicle[i].height);
+        build_layer(false, heights, num_splits, independent_mode);
+        build_layer(true, heights, num_splits, independent_mode);
+        initialized = true;
+    }
+    
+    const std::vector<DynamicSegment>& get_blocks(bool is_upper) const { return is_upper ? upper_blocks : lower_blocks; }
+    const std::vector<DynamicInterval>& get_intervals(bool is_upper) const { return is_upper ? upper_intervals : lower_intervals; }
+};
+
+extern DynamicGeometry GLOBAL_GEOM;
+
+inline bool dfs_check(int car_idx, const std::vector<std::vector<std::vector<int>>>& car_choice_hits, 
+                      const std::vector<double>& car_lens, const std::vector<double>& caps, 
+                      std::vector<double>& current_usage) {
+    if (car_idx == car_lens.size()) return true;
+    double clen = car_lens[car_idx];
+    
+    for (const auto& hits : car_choice_hits[car_idx]) {
+        bool valid = true;
+        for (int j : hits) {
+            if (current_usage[j] + clen > caps[j] + 1e-5) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) {
+            for (int j : hits) current_usage[j] += clen;
+            if (dfs_check(car_idx + 1, car_choice_hits, car_lens, caps, current_usage)) return true;
+            for (int j : hits) current_usage[j] -= clen;
+        }
+    }
+    return false;
+}
 
 inline bool IsFeasible_Floor(const std::vector<int>& route, Problem* p, int mode_left, int mode_right, int floor, int spacing) {
     if (route.empty()) return true;
-    // Limit car count to 8 to avoid 2^N explosion and match Python logic
     if (route.size() > 8) return false;
-
-    std::vector<Region> regions;
-    double total_len = 0.0;
     
-    if (floor == 0) { // Top floor: D1, E, D2
-        double d_left_height = (mode_left == 0) ? Config::D_height_h : Config::D_height_m;
-        double d_right_height = (mode_right == 0) ? Config::D_height_h : Config::D_height_m;
-        
-        regions.push_back({0.0, Config::D_len, d_left_height});
-        regions.push_back({Config::D_len, Config::D_len + Config::E_len, Config::E_height});
-        regions.push_back({Config::D_len + Config::E_len, Config::D_len * 2 + Config::E_len, d_right_height});
-        total_len = Config::D_len * 2 + Config::E_len;
-    } else { // Bottom floor: A1, B1, C, B2, A2
-        double a_left_height = (mode_left == 0) ? Config::A_height_h : Config::A_height_m;
-        double a_right_height = (mode_right == 0) ? Config::A_height_h : Config::A_height_m;
-        
-        double a_end = Config::A_len;
-        double b_end = a_end + Config::B_len;
-        double c_end = b_end + Config::C_len;
-        double b2_end = c_end + Config::B_len;
-        double a2_end = b2_end + Config::A_len;
-        
-        regions.push_back({0.0, a_end, a_left_height});
-        regions.push_back({a_end, b_end, Config::B_height});
-        regions.push_back({b_end, c_end, Config::C_height});
-        regions.push_back({c_end, b2_end, Config::B_height});
-        regions.push_back({b2_end, a2_end, a_right_height});
-        total_len = a2_end;
+    GLOBAL_GEOM.init(p);
+    
+    bool is_upper = (floor == 0);
+    const auto& blocks = GLOBAL_GEOM.get_blocks(is_upper);
+    const auto& intervals = GLOBAL_GEOM.get_intervals(is_upper);
+    int N_blocks = blocks.size() - 1;
+    
+    bool pi_left = (mode_left == 1);
+    bool pi_right = (mode_right == 1);
+    
+    std::vector<double> limit_left;
+    std::vector<double> limit_right;
+    for (const auto& b : blocks) {
+        limit_left.push_back(pi_left ? b.h_m : b.h_h);
+        limit_right.push_back(pi_right ? b.h_m : b.h_h);
     }
-
-    double x = 0.0;
-
-    for (int v_id : route) {
-        Vehicle* v = p->GetVehicle(v_id);
-        bool placed = false;
-        
-        while (x + v->length <= total_len + 1e-5) {
-            bool valid = true;
-            double jump_to = x;
-            
-            for (const auto& r : regions) {
-                if (std::max(x, r.start) < std::min(x + v->length, r.end) - 1e-5) {
-                    if (r.height < v->height) {
-                        valid = false;
-                        jump_to = r.end;
-                        break; 
-                    }
-                }
-            }
-            
-            if (valid) {
-                x += v->length + spacing;
-                placed = true;
-                break;
-            } else {
-                x = jump_to; 
-            }
+    double actual_limit_central = std::min(limit_left[0], limit_right[0]);
+    
+    std::vector<int> sorted_route = route;
+    std::sort(sorted_route.begin(), sorted_route.end(), [&](int a, int b) {
+        return p->GetVehicle(a)->height > p->GetVehicle(b)->height;
+    });
+    
+    std::vector<std::vector<std::vector<int>>> car_choices; // For each car, a list of choices, where each choice is a list of hit interval indices
+    std::vector<double> caps;
+    
+    // Filter intervals based on pi relaxation for upper deck
+    std::vector<DynamicInterval> active_intervals;
+    for (const auto& inter : intervals) {
+        if (is_upper) {
+            bool enforce_left = (inter.l_idx == N_blocks) || pi_left;
+            bool enforce_right = (inter.r_idx == N_blocks) || pi_right;
+            if (!(enforce_left && enforce_right)) continue;
         }
-        
-        if (!placed) {
-            return false; 
-        }
+        active_intervals.push_back(inter);
+        caps.push_back(inter.cap);
     }
-
-    // Explicitly enforce the Gurobi capacity cuts (sum of lengths + delta)
-    double delta = spacing;
-    if (floor == 0) {
-        double h_d_left = (mode_left == 1) ? Config::D_height_m : Config::D_height_h;
-        double h_d_right = (mode_right == 1) ? Config::D_height_m : Config::D_height_h;
+    
+    std::vector<double> car_lens_w_delta;
+    
+    for (int v_id : sorted_route) {
+        double h = p->GetVehicle(v_id)->height;
+        car_lens_w_delta.push_back(p->GetVehicle(v_id)->length + spacing);
         
-        double sum_E = 0, sum_D_L = 0, sum_D_R = 0;
-        for (int v_id : route) {
-            double h = p->GetVehicle(v_id)->height;
-            double l = p->GetVehicle(v_id)->length + delta;
-            
-            if (h > h_d_left && h > h_d_right) {
-                sum_E += l;
-            } else if (h > h_d_left) {
-                sum_E += l; // Push to E or D_right. Let's conservatively add to E for bounds checking.
-            } else if (h > h_d_right) {
-                sum_E += l; 
-            } else {
-                // If it fits anywhere, we don't strictly need to assign it here unless we are solving the bin packing perfectly.
-                // The continuous check already verified it packs. 
-                // However, Gurobi explicitly checks: sum_{h in H6[k]} x*(L+Delta) <= L_D + L_E.
-                // We'll just enforce the global bound to catch the exact case where continuous straddles boundaries.
+        int max_l = -1, max_r = -1;
+        for (int idx = N_blocks; idx > 0; --idx) {
+            if (h <= limit_left[idx]) { max_l = idx; break; }
+        }
+        if (max_l == -1 && h <= actual_limit_central) max_l = 0;
+        
+        for (int idx = N_blocks; idx > 0; --idx) {
+            if (h <= limit_right[idx]) { max_r = idx; break; }
+        }
+        if (max_r == -1 && h <= actual_limit_central) max_r = 0;
+        
+        if (max_l == -1 && max_r == -1) return false;
+        
+        std::vector<std::pair<std::string, int>> raw_choices;
+        if (max_l == 0 && max_r == 0) {
+            raw_choices.push_back({"central", 0});
+        } else {
+            if (max_l >= 0) raw_choices.push_back({"left", max_l});
+            if (max_r >= 0) raw_choices.push_back({"right", max_r});
+        }
+        
+        std::vector<std::vector<int>> hit_choices;
+        for (const auto& ch : raw_choices) {
+            std::vector<int> hits;
+            for (size_t j = 0; j < active_intervals.size(); ++j) {
+                bool inside = false;
+                if (ch.first == "central") inside = true;
+                else if (ch.first == "left" && ch.second <= active_intervals[j].l_idx) inside = true;
+                else if (ch.first == "right" && ch.second <= active_intervals[j].r_idx) inside = true;
+                if (inside) hits.push_back(j);
             }
+            hit_choices.push_back(hits);
         }
-        
-        double total_car_len_with_delta = 0.0;
-        for (int v_id : route) {
-            total_car_len_with_delta += p->GetVehicle(v_id)->length + delta;
-        }
-        
-        if (total_car_len_with_delta > 2 * Config::D_len + Config::E_len - delta + 1e-5) return false;
-        
-        if (mode_left == 1) {
-            double left_e_used = 0.0;
-            for (int v_id : route) {
-                double h = p->GetVehicle(v_id)->height;
-                double l = p->GetVehicle(v_id)->length + delta;
-                // Cars that CANNOT go to D_right MUST go to D_left or E
-                if (h > h_d_right || h <= h_d_left) { 
-                    left_e_used += l;
-                }
-            }
-            // A conservative check: if ALL cars that could possibly go to D_left + E exceed the limit.
-            // A better way is to call a simplified checker. But let's just stick to the known boundary gap:
-            // if sum(L + delta) for all cars > D_len + E_len when mode_left=1?
-            // Actually, if we just check the total length of the route up to a certain point:
-        }
-        
-        // Exact Python/Gurobi logic replication for upper deck (mode_left=1 -> pi_left=1)
-        if (mode_left == 1 || mode_right == 1) {
-            std::vector<int> cars(route.begin(), route.end());
-            // Brute force 2^N left/right assignment just like Python _simple_check_layer_bs
-            // This is O(2^N) but N <= 8, so it's virtually instantaneous (max 256 iterations)
-            bool global_feasible = false;
-            int n_cars = cars.size();
-            for (int mask = 0; mask < (1 << n_cars); ++mask) {
-                double temp_E = 0, temp_D_L = 0, temp_D_R = 0;
-                bool valid_assignment = true;
-                
-                for (int i = 0; i < n_cars; ++i) {
-                    int v_id = cars[i];
-                    double h = p->GetVehicle(v_id)->height;
-                    double l = p->GetVehicle(v_id)->length + delta;
-                    
-                    if (h > Config::E_height) { valid_assignment = false; break; }
-                    
-                    if ((mask & (1 << i)) == 0) { // left
-                        if (h > h_d_left) temp_E += l;
-                        else temp_D_L += l;
-                    } else { // right
-                        if (h > h_d_right) temp_E += l;
-                        else temp_D_R += l;
-                    }
-                }
-                
-                if (!valid_assignment) continue;
-                if (temp_E + temp_D_L + temp_D_R > Config::E_len + 2*Config::D_len - delta + 1e-5) continue;
-                
-                bool feasible = true;
-                if (mode_left == 1) {
-                    if (temp_E > Config::E_len + delta + 1e-5) feasible = false;
-                    if (temp_E + temp_D_L > Config::E_len + Config::D_len + 1e-5) feasible = false;
-                }
-                if (mode_right == 1) {
-                    if (temp_E > Config::E_len + delta + 1e-5) feasible = false;
-                    if (temp_E + temp_D_R > Config::E_len + Config::D_len + 1e-5) feasible = false;
-                }
-                
-                if (feasible) {
-                    global_feasible = true;
-                    break;
-                }
-            }
-            if (!global_feasible) return false;
-        }
-        
-    } else { // bottom floor
-        double total_car_len_with_delta = 0.0;
-        for (int v_id : route) {
-            total_car_len_with_delta += p->GetVehicle(v_id)->length + delta;
-        }
-        if (total_car_len_with_delta > 2 * Config::A_len + 2 * Config::B_len + Config::C_len - delta + 1e-5) return false;
-        
-        if (mode_left == 1 || mode_right == 1) {
-            double h_a_left = (mode_left == 1) ? Config::A_height_m : Config::A_height_h;
-            double h_a_right = (mode_right == 1) ? Config::A_height_m : Config::A_height_h;
-            double h_b = Config::B_height;
-            double h_c = Config::C_height;
-            
-            std::vector<int> cars(route.begin(), route.end());
-            bool global_feasible = false;
-            int n_cars = cars.size();
-            
-            for (int mask = 0; mask < (1 << n_cars); ++mask) {
-                double temp_C = 0, temp_B_L = 0, temp_B_R = 0, temp_A_L = 0, temp_A_R = 0;
-                bool valid_assignment = true;
-                
-                for (int i = 0; i < n_cars; ++i) {
-                    int v_id = cars[i];
-                    double h = p->GetVehicle(v_id)->height;
-                    double l = p->GetVehicle(v_id)->length + delta;
-                    
-                    if (h > h_c) { valid_assignment = false; break; }
-                    
-                    if (h > h_b) {
-                        temp_C += l;
-                    } else if ((mask & (1 << i)) == 0) { // left
-                        if (h > h_a_left) temp_B_L += l;
-                        else temp_A_L += l;
-                    } else { // right
-                        if (h > h_a_right) temp_B_R += l;
-                        else temp_A_R += l;
-                    }
-                }
-                
-                if (!valid_assignment) continue;
-                
-                if (temp_C > Config::C_len + delta + 1e-5) continue;
-                if (temp_C + temp_B_L + temp_B_R > Config::C_len + 2*Config::B_len + delta + 1e-5) continue;
-                if (temp_C + temp_B_L + temp_B_R + temp_A_L + temp_A_R > Config::C_len + 2*Config::B_len + 2*Config::A_len - delta + 1e-5) continue;
-                
-                bool feasible = true;
-                if (mode_left == 1) {
-                    if (temp_C + temp_B_L > Config::C_len + Config::B_len + delta + 1e-5) feasible = false;
-                    if (temp_C + temp_B_L + temp_A_L > Config::C_len + Config::B_len + Config::A_len + 1e-5) feasible = false;
-                }
-                if (mode_right == 1) {
-                    if (temp_C + temp_B_R > Config::C_len + Config::B_len + delta + 1e-5) feasible = false;
-                    if (temp_C + temp_B_R + temp_A_R > Config::C_len + Config::B_len + Config::A_len + 1e-5) feasible = false;
-                }
-                
-                if (feasible) {
-                    global_feasible = true;
-                    break;
-                }
-            }
-            if (!global_feasible) return false;
-        }
+        car_choices.push_back(hit_choices);
     }
-
-    return true;
+    
+    std::vector<double> current_usage(active_intervals.size(), 0.0);
+    return dfs_check(0, car_choices, car_lens_w_delta, caps, current_usage);
 }
 
 inline bool IsFeasible_Length(const Carriage& c, Problem* p) {

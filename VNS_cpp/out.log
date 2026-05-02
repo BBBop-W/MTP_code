@@ -1,9 +1,0 @@
-
-	==============================
-	Start VNS Optimization
-	Max non-improve iterations: 220
-	Initial VNS_Obj: 85624.3 | Actual Length: 426550
-	Iter 1 | New Global Best VNS_Obj: 92560.6 | Actual Length: 443070
-	Iter 2 | New Global Best VNS_Obj: 95645.8 | Actual Length: 455210
-	Iter 3 | New Global Best VNS_Obj: 98687 | Actual Length: 462380
-	Iter 4 | New Global Best VNS_Obj: 99899.8 | Actual Length: 466210
