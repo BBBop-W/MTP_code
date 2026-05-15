@@ -12,3 +12,8 @@ Meituan-TSL/
 results/
 *.ilp
 *.rar
+*.json
+*.log
+*.csv
+*.xlsx
+*.pid
