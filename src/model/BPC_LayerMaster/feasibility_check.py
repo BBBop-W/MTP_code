@@ -214,9 +214,238 @@ def _simple_check_layer_bs(
     return dynamic_recursive_bs(compartment, deck_mode, quantities, car_lengths, car_heights)
 
 
+@dataclass(frozen=True)
+class PlacementChoice:
+    side: str
+    block_idx: int
+    hits: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class LayerResourceModel:
+    capacities: Tuple[float, ...]
+    intervals: Tuple[Tuple[int, int, float], ...]
+    choices_by_type: Dict[int, Tuple[PlacementChoice, ...]]
+    delta: float = 400.0
+
+
+@dataclass(frozen=True)
+class OuterInnerChoice:
+    side: str
+    block_idx: int
+    hits: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class LayerOuterInnerModel:
+    capacities: Tuple[float, ...]
+    choices_by_type: Dict[int, Tuple[OuterInnerChoice, ...]]
+    delta: float = 400.0
+
+
+def _split_deck_mode(deck_mode: str) -> Tuple[str, str]:
+    if "-" in deck_mode:
+        mode_left, mode_right = deck_mode.split("-")
+        return mode_left, mode_right
+    mode = "h" if deck_mode == "horizontal" else "m"
+    return mode, mode
+
+
+def _keep_interval_for_profile(l_idx: int, r_idx: int, n_blocks: int, interval_profile: str) -> bool:
+    if interval_profile == "full":
+        return True
+    if interval_profile == "fans_diag":
+        return l_idx == n_blocks or r_idx == n_blocks or l_idx == r_idx
+    raise ValueError(f"Unknown interval_profile: {interval_profile}")
+
+
+def build_layer_resource_model(layer: 'LayerSpec', interval_profile: str = "full") -> LayerResourceModel:
+    """Build the monotone interval-resource model used by residual-profile labels.
+
+    This mirrors the interval constraints used in check_layer_gurobi, but keeps
+    only the outermost valid placement per side. For this nested interval model,
+    moving a car outward weakly decreases every interval usage, so those choices
+    preserve feasibility while avoiding dominated placement states.
+    """
+
+    mode = layer.shape_params.get("deck", "h-h")
+    compartment = layer.shape_params.get("compartment", "lower")
+    mode_left, mode_right = _split_deck_mode(mode)
+    pi_left = 1 if mode_left == "m" else 0
+    pi_right = 1 if mode_right == "m" else 0
+
+    segments = _get_segments_for_layer(layer.car_heights)
+    central = segments[compartment]["central"]
+    blocks = segments[compartment]["blocks"]
+    n_blocks = len(blocks)
+
+    limit_left = [central["h_m"] if pi_left else central["h_h"]]
+    limit_right = [central["h_m"] if pi_right else central["h_h"]]
+    for block in blocks:
+        limit_left.append(block["h_m"] if pi_left else block["h_h"])
+        limit_right.append(block["h_m"] if pi_right else block["h_h"])
+
+    actual_limit_central = min(limit_left[0], limit_right[0])
+    lengths = [central["len"]] + [block["len"] for block in blocks]
+    delta = 400.0
+
+    intervals: List[Tuple[int, int, float]] = []
+    for l_idx in range(n_blocks + 1):
+        for r_idx in range(n_blocks + 1):
+            if compartment == "upper":
+                enforce_left = (l_idx == n_blocks) or (pi_left == 1)
+                enforce_right = (r_idx == n_blocks) or (pi_right == 1)
+                if not (enforce_left and enforce_right):
+                    continue
+
+            if l_idx == n_blocks and r_idx == n_blocks:
+                mod = -delta
+            elif l_idx == n_blocks or r_idx == n_blocks:
+                mod = 0.0
+            else:
+                mod = delta
+
+            cap = lengths[0] + sum(lengths[1:l_idx + 1]) + sum(lengths[1:r_idx + 1]) + mod
+            if _keep_interval_for_profile(l_idx, r_idx, n_blocks, interval_profile):
+                intervals.append((l_idx, r_idx, cap))
+
+    def hits_for(side: str, block_idx: int) -> Tuple[int, ...]:
+        hits: List[int] = []
+        for idx, (l_int, r_int, _cap) in enumerate(intervals):
+            inside = False
+            if side == "central":
+                inside = True
+            elif side == "left" and block_idx <= l_int:
+                inside = True
+            elif side == "right" and block_idx <= r_int:
+                inside = True
+            if inside:
+                hits.append(idx)
+        return tuple(hits)
+
+    choices_by_type: Dict[int, Tuple[PlacementChoice, ...]] = {}
+    for car_type in layer.car_types:
+        height = layer.car_heights[car_type]
+
+        max_l = -1
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_left[idx]:
+                max_l = idx
+                break
+        if max_l == -1 and height <= actual_limit_central:
+            max_l = 0
+
+        max_r = -1
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_right[idx]:
+                max_r = idx
+                break
+        if max_r == -1 and height <= actual_limit_central:
+            max_r = 0
+
+        choices: List[PlacementChoice] = []
+        if max_l == 0 and max_r == 0:
+            choices.append(PlacementChoice("central", 0, hits_for("central", 0)))
+        else:
+            if max_l >= 0:
+                side = "central" if max_l == 0 else "left"
+                choices.append(PlacementChoice(side, max_l, hits_for(side, max_l)))
+            if max_r >= 0:
+                side = "central" if max_r == 0 else "right"
+                choices.append(PlacementChoice(side, max_r, hits_for(side, max_r)))
+
+        dedup: Dict[Tuple[int, ...], PlacementChoice] = {}
+        for choice in choices:
+            dedup.setdefault(choice.hits, choice)
+        choices_by_type[car_type] = tuple(dedup.values())
+
+    return LayerResourceModel(
+        capacities=tuple(cap for _l, _r, cap in intervals),
+        intervals=tuple(intervals),
+        choices_by_type=choices_by_type,
+        delta=delta,
+    )
+
+
+def build_layer_outer_inner_model(layer: 'LayerSpec') -> LayerOuterInnerModel:
+    """Build an experimental outer-to-inner resource model.
+
+    This is intentionally smaller than the full nested (l, r) interval profile:
+    it keeps one-dimensional left/right prefix capacities, a central capacity,
+    and a total full-layer capacity. It is useful for testing an outside-in
+    canonical loading rule, while the full nested model remains the exact path.
+    """
+
+    mode = layer.shape_params.get("deck", "h-h")
+    compartment = layer.shape_params.get("compartment", "lower")
+    mode_left, mode_right = _split_deck_mode(mode)
+    pi_left = 1 if mode_left == "m" else 0
+    pi_right = 1 if mode_right == "m" else 0
+
+    segments = _get_segments_for_layer(layer.car_heights)
+    central = segments[compartment]["central"]
+    blocks = segments[compartment]["blocks"]
+    n_blocks = len(blocks)
+    delta = 400.0
+
+    limit_left = [central["h_m"] if pi_left else central["h_h"]]
+    limit_right = [central["h_m"] if pi_right else central["h_h"]]
+    for block in blocks:
+        limit_left.append(block["h_m"] if pi_left else block["h_h"])
+        limit_right.append(block["h_m"] if pi_right else block["h_h"])
+
+    actual_limit_central = min(limit_left[0], limit_right[0])
+    lengths = [central["len"]] + [block["len"] for block in blocks]
+
+    left_offset = 0
+    right_offset = n_blocks
+    central_idx = 2 * n_blocks
+    total_idx = central_idx + 1
+
+    capacities: List[float] = []
+    for idx in range(1, n_blocks + 1):
+        capacities.append(sum(lengths[1:idx + 1]))
+    for idx in range(1, n_blocks + 1):
+        capacities.append(sum(lengths[1:idx + 1]))
+    capacities.append(lengths[0] + delta)
+    capacities.append(lengths[0] + sum(lengths[1:]) * 2.0 - delta)
+
+    def side_hits(side: str, block_idx: int) -> Tuple[int, ...]:
+        offset = left_offset if side == "left" else right_offset
+        return tuple([offset + idx - 1 for idx in range(block_idx, n_blocks + 1)] + [total_idx])
+
+    choices_by_type: Dict[int, Tuple[OuterInnerChoice, ...]] = {}
+    for car_type in layer.car_types:
+        height = layer.car_heights[car_type]
+        choices: List[OuterInnerChoice] = []
+
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_left[idx]:
+                choices.append(OuterInnerChoice("left", idx, side_hits("left", idx)))
+                break
+
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_right[idx]:
+                choices.append(OuterInnerChoice("right", idx, side_hits("right", idx)))
+                break
+
+        if height <= actual_limit_central:
+            choices.append(OuterInnerChoice("central", 0, (central_idx, total_idx)))
+
+        choices_by_type[car_type] = tuple(choices)
+
+    return LayerOuterInnerModel(
+        capacities=tuple(capacities),
+        choices_by_type=choices_by_type,
+        delta=delta,
+    )
+
+
 class HierarchicalBSEvaluator:
-    def __init__(self):
+    def __init__(self, compute_reachable_types: bool = True):
+        self.compute_reachable_types = compute_reachable_types
         self.accumulated_time = 0.0
+        self.reachability_probes = 0
         self._cache = {}
 
     def evaluate(self, layer: 'LayerSpec', quantities: Dict[int, int]) -> 'BSResult':
@@ -229,7 +458,7 @@ class HierarchicalBSEvaluator:
         
         clean_q = {i: q for i, q in quantities.items() if q > 0}
         
-        cache_key = (compartment, mode, tuple(sorted(clean_q.items())))
+        cache_key = (compartment, mode, tuple(sorted(clean_q.items())), self.compute_reachable_types)
         if cache_key in self._cache:
             self.accumulated_time += (time.time() - t0)
             return self._cache[cache_key]
@@ -244,30 +473,35 @@ class HierarchicalBSEvaluator:
         
         if res is not None:
             reachable = set()
-            for t in layer.car_types:
-                max_q = int(layer.max_quantity_by_type.get(t, 6))
-                if clean_q.get(t, 0) >= max_q:
-                    continue
-                probe = dict(clean_q)
-                probe[t] = probe.get(t, 0) + 1
-                
-                probe_key = (compartment, mode, tuple(sorted(probe.items())))
-                if probe_key in self._cache:
-                    if self._cache[probe_key].feasible:
-                        reachable.add(t)
-                    continue
+            if self.compute_reachable_types:
+                for t in layer.car_types:
+                    max_q = int(layer.max_quantity_by_type.get(t, 6))
+                    if clean_q.get(t, 0) >= max_q:
+                        continue
+                    probe = dict(clean_q)
+                    probe[t] = probe.get(t, 0) + 1
 
-                probe_res = dynamic_recursive_bs(
-                    compartment=compartment,
-                    deck_mode=mode,
-                    quantities=probe,
-                    car_lengths=layer.car_lengths,
-                    car_heights=layer.car_heights
-                )
-                if probe_res is not None:
-                    reachable.add(t)
+                    probe_key = (compartment, mode, tuple(sorted(probe.items())), self.compute_reachable_types)
+                    if probe_key in self._cache:
+                        if self._cache[probe_key].feasible:
+                            reachable.add(t)
+                        continue
+
+                    self.reachability_probes += 1
+                    probe_res = dynamic_recursive_bs(
+                        compartment=compartment,
+                        deck_mode=mode,
+                        quantities=probe,
+                        car_lengths=layer.car_lengths,
+                        car_heights=layer.car_heights
+                    )
+                    if probe_res is not None:
+                        reachable.add(t)
+                reachable_types = reachable
+            else:
+                reachable_types = None
                     
-            bs_result = BSResult(feasible=True, best_length=res, reachable_types=reachable)
+            bs_result = BSResult(feasible=True, best_length=res, reachable_types=reachable_types)
             self._cache[cache_key] = bs_result
             self.accumulated_time += (time.time() - t0)
             return bs_result

@@ -12,8 +12,6 @@ class DualValues:
     gamma: float
     branch_a: Dict[int, float] = field(default_factory=dict)
     branch_q: Dict[int, float] = field(default_factory=dict)
-    branch_a: Dict[int, float] = field(default_factory=dict)
-    branch_q: Dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -37,8 +35,25 @@ class LayerSpec:
 class LabelingOptions:
     use_dominance: bool = True
     use_cuts: bool = False
+    use_rc_bound: bool = True
+    use_residual_profile: bool = False
+    use_outer_inner_profile: bool = False
+    use_height_order: bool = True
+    use_local_residual_skyline: bool = True
+    residual_profile_mode: str = "full"
+    compute_reachable_types: bool = False
     max_units_per_type: int = 6
     eps: float = 1e-9
+
+
+@dataclass
+class LabelingStats:
+    labels_feasible: int = 0
+    labels_pruned_by_bound: int = 0
+    labels_pruned_by_dominance: int = 0
+    labels_pruned_by_local_skyline: int = 0
+    labels_after_dominance: int = 0
+    reachability_probes: int = 0
 
 
 @dataclass(frozen=True)
@@ -71,6 +86,15 @@ class Label:
     reachable_types: Set[int]
 
 
+@dataclass
+class ResidualLabel:
+    stage: int
+    reduced_cost: float
+    quantities: Dict[int, int]
+    total_length: float
+    residual: Tuple[float, ...]
+
+
 @dataclass(frozen=True)
 class LayerPattern:
     layer_id: str
@@ -90,7 +114,11 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_LayerMaster.feasibility_check import HierarchicalBSEvaluator
+from src.model.BPC_LayerMaster.feasibility_check import (
+    HierarchicalBSEvaluator,
+    build_layer_outer_inner_model,
+    build_layer_resource_model,
+)
 
 
 def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -> bool:
@@ -116,7 +144,12 @@ def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -
     return True
 
 
-def _apply_dominance(labels: List[Label], ordered_types: List[int], eps: float) -> List[Label]:
+def _apply_dominance(
+    labels: List[Label],
+    ordered_types: List[int],
+    eps: float,
+    stats: Optional[LabelingStats] = None,
+) -> List[Label]:
     kept: List[Label] = []
     for cand in labels:
         dominated = False
@@ -128,10 +161,16 @@ def _apply_dominance(labels: List[Label], ordered_types: List[int], eps: float) 
             if _label_dominates(cand, old, ordered_types, eps):
                 remove_idx.append(idx)
         if dominated:
+            if stats is not None:
+                stats.labels_pruned_by_dominance += 1
             continue
         if remove_idx:
+            if stats is not None:
+                stats.labels_pruned_by_dominance += len(remove_idx)
             kept = [v for i, v in enumerate(kept) if i not in set(remove_idx)]
         kept.append(cand)
+    if stats is not None:
+        stats.labels_after_dominance += len(kept)
     return kept
 
 
@@ -141,6 +180,7 @@ def _infer_reachable_types(
     next_types: Iterable[int],
     bs: BSEvaluator,
     options: LabelingOptions,
+    stats: Optional[LabelingStats] = None,
 ) -> Set[int]:
     reachable: Set[int] = set()
     for t in next_types:
@@ -149,10 +189,434 @@ def _infer_reachable_types(
             continue
         probe_q = dict(current_q)
         probe_q[t] = probe_q.get(t, 0) + 1
+        if stats is not None:
+            stats.reachability_probes += 1
         probe = bs.evaluate(layer, probe_q)
         if probe.feasible:
             reachable.add(t)
     return reachable
+
+
+def _future_reduced_cost_lower_bound(
+    current_rc: float,
+    remaining_types: Iterable[int],
+    layer: LayerSpec,
+    duals: DualValues,
+    options: LabelingOptions,
+) -> float:
+    """Optimistic lower bound for any suffix extension, ignoring geometry.
+
+    If this value is non-negative, no feasible suffix can make the label produce
+    a negative reduced-cost column. The bound is intentionally optimistic, so
+    pruning on it is safe.
+    """
+
+    lb = current_rc
+    for t in remaining_types:
+        max_q = min(options.max_units_per_type, int(layer.max_quantity_by_type.get(t, options.max_units_per_type)))
+        coef = layer.car_lengths[t] + duals.alpha.get(t, 0.0) + duals.beta.get(t, 0.0) + duals.branch_q.get(t, 0.0)
+        best_delta = 0.0
+        for q in range(1, max_q + 1):
+            delta = -coef * q - duals.branch_a.get(t, 0.0)
+            if delta < best_delta:
+                best_delta = delta
+        lb += best_delta
+    return lb
+
+
+def _residual_label_dominates(a: ResidualLabel, b: ResidualLabel, eps: float) -> bool:
+    if a.reduced_cost > b.reduced_cost + eps:
+        return False
+
+    profile_strict = False
+    for a_res, b_res in zip(a.residual, b.residual):
+        if a_res + eps < b_res:
+            return False
+        if a_res > b_res + eps:
+            profile_strict = True
+
+    return profile_strict or a.reduced_cost < b.reduced_cost - eps
+
+
+def _apply_residual_dominance(
+    labels: List[ResidualLabel],
+    eps: float,
+    stats: Optional[LabelingStats] = None,
+) -> List[ResidualLabel]:
+    if not labels:
+        return []
+
+    import numpy as np
+
+    ordered = sorted(labels, key=lambda label: label.reduced_cost)
+    dim = len(ordered[0].residual)
+    kept_residuals = np.empty((len(ordered), dim), dtype=float)
+    kept_costs = np.empty(len(ordered), dtype=float)
+    kept: List[ResidualLabel] = []
+
+    for cand in ordered:
+        dominated = False
+        kept_count = len(kept)
+        if kept_count:
+            cand_residual = np.asarray(cand.residual, dtype=float)
+            residual_ok = np.all(kept_residuals[:kept_count] + eps >= cand_residual, axis=1)
+            if np.any(residual_ok):
+                profile_strict = np.any(kept_residuals[:kept_count] > cand_residual + eps, axis=1)
+                cost_strict = kept_costs[:kept_count] < cand.reduced_cost - eps
+                dominated = bool(np.any(residual_ok & (profile_strict | cost_strict)))
+
+        if dominated:
+            if stats is not None:
+                stats.labels_pruned_by_dominance += 1
+            continue
+
+        kept_residuals[kept_count, :] = cand.residual
+        kept_costs[kept_count] = cand.reduced_cost
+        kept.append(cand)
+
+    if stats is not None:
+        stats.labels_after_dominance += len(kept)
+    return kept
+
+
+def _choice_count_vectors(total: int, num_choices: int) -> Iterator[Tuple[int, ...]]:
+    if num_choices == 0:
+        if total == 0:
+            yield ()
+        return
+    if num_choices == 1:
+        yield (total,)
+        return
+    for first in range(total + 1):
+        for rest in _choice_count_vectors(total - first, num_choices - 1):
+            yield (first,) + rest
+
+
+def _placement_consumptions(
+    choices,
+    quantity: int,
+    unit_length: float,
+    resource_count: int,
+) -> Iterator[Tuple[float, ...]]:
+    if quantity == 0:
+        yield (0.0,) * resource_count
+        return
+    if not choices:
+        return
+
+    seen: Set[Tuple[float, ...]] = set()
+    for counts in _choice_count_vectors(quantity, len(choices)):
+        consumption = [0.0] * resource_count
+        for count, choice in zip(counts, choices):
+            if count == 0:
+                continue
+            amount = count * unit_length
+            for idx in choice.hits:
+                consumption[idx] += amount
+        key = tuple(consumption)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield key
+
+
+def _residual_vector_dominates(a: Tuple[float, ...], b: Tuple[float, ...], eps: float) -> bool:
+    strict = False
+    for a_val, b_val in zip(a, b):
+        if a_val + eps < b_val:
+            return False
+        if a_val > b_val + eps:
+            strict = True
+    return strict
+
+
+def _local_residual_skyline(
+    residuals: List[Tuple[float, ...]],
+    eps: float,
+    stats: Optional[LabelingStats] = None,
+) -> List[Tuple[float, ...]]:
+    kept: List[Tuple[float, ...]] = []
+    for residual in residuals:
+        dominated = False
+        remove_idx: List[int] = []
+        for idx, old in enumerate(kept):
+            if _residual_vector_dominates(old, residual, eps):
+                dominated = True
+                break
+            if _residual_vector_dominates(residual, old, eps):
+                remove_idx.append(idx)
+        if dominated:
+            if stats is not None:
+                stats.labels_pruned_by_local_skyline += 1
+            continue
+        if remove_idx:
+            if stats is not None:
+                stats.labels_pruned_by_local_skyline += len(remove_idx)
+            kept = [value for idx, value in enumerate(kept) if idx not in set(remove_idx)]
+        kept.append(residual)
+    return kept
+
+
+def _apply_consumption(
+    residual: Tuple[float, ...],
+    consumption: Tuple[float, ...],
+    eps: float,
+) -> Optional[Tuple[float, ...]]:
+    new_residual = tuple(r - c for r, c in zip(residual, consumption))
+    if any(v < -eps for v in new_residual):
+        return None
+    return new_residual
+
+
+def _outer_inner_allocate(
+    residual: Tuple[float, ...],
+    choices,
+    quantity: int,
+    unit_length: float,
+    eps: float,
+) -> Optional[Tuple[float, ...]]:
+    if quantity == 0:
+        return residual
+    if not choices:
+        return None
+
+    current = list(residual)
+    for _ in range(quantity):
+        best_choice = None
+        best_score = None
+        for choice in choices:
+            if any(current[idx] < unit_length - eps for idx in choice.hits):
+                continue
+            after_hits = [current[idx] - unit_length for idx in choice.hits]
+            # Prefer outer blocks first, then the placement that leaves the
+            # largest bottleneck residual. Central is kept as the last resort.
+            is_side = 1 if choice.side != "central" else 0
+            score = (is_side, choice.block_idx, min(after_hits), sum(after_hits))
+            if best_score is None or score > best_score:
+                best_choice = choice
+                best_score = score
+
+        if best_choice is None:
+            return None
+        for idx in best_choice.hits:
+            current[idx] -= unit_length
+
+    return tuple(current)
+
+
+def generate_layer_patterns_outer_inner(
+    layer: LayerSpec,
+    duals: DualValues,
+    options: LabelingOptions = LabelingOptions(use_residual_profile=True, use_outer_inner_profile=True),
+    cut_evaluator: Optional[CutEvaluator] = None,
+    stats: Optional[LabelingStats] = None,
+) -> List[LayerPattern]:
+    """Experimental outside-in label generation.
+
+    Car types are processed from low to high. For each quantity q, a canonical
+    greedy placement fills the outermost feasible side resources first, so each
+    parent label creates at most one child per q.
+    """
+
+    if options.use_cuts:
+        raise ValueError("Outer-inner profile is disabled for use_cuts=True.")
+    if cut_evaluator is not None:
+        raise ValueError("Outer-inner profile generation does not support cut_evaluator.")
+
+    ordered_types = sorted(layer.car_types, key=lambda i: (float(layer.car_heights.get(i, 0.0)), i))
+    resource_model = build_layer_outer_inner_model(layer)
+
+    root_quantities = {i: 0 for i in ordered_types}
+    root_label = ResidualLabel(
+        stage=0,
+        reduced_cost=-duals.gamma / 2.0,
+        quantities=root_quantities,
+        total_length=0.0,
+        residual=resource_model.capacities,
+    )
+
+    current_labels: List[ResidualLabel] = [root_label]
+
+    for stage, car_type in enumerate(ordered_types, start=1):
+        next_labels: List[ResidualLabel] = []
+        choices = resource_model.choices_by_type.get(car_type, ())
+        max_q = min(options.max_units_per_type, int(layer.max_quantity_by_type.get(car_type, options.max_units_per_type)))
+        unit_resource = layer.car_lengths[car_type] + resource_model.delta
+        unit_length = layer.car_lengths[car_type]
+        coef = unit_length + duals.alpha.get(car_type, 0.0) + duals.beta.get(car_type, 0.0) + duals.branch_q.get(car_type, 0.0)
+        remaining = ordered_types[stage:]
+
+        for lb in current_labels:
+            for q in range(0, max_q + 1):
+                q_new = dict(lb.quantities)
+                q_new[car_type] = q
+
+                rc = lb.reduced_cost - coef * q
+                if q > 0:
+                    rc -= duals.branch_a.get(car_type, 0.0)
+
+                if options.use_rc_bound:
+                    rc_lb = _future_reduced_cost_lower_bound(rc, remaining, layer, duals, options)
+                    if rc_lb >= -options.eps:
+                        if stats is not None:
+                            stats.labels_pruned_by_bound += 1
+                        continue
+
+                residual = _outer_inner_allocate(lb.residual, choices, q, unit_resource, options.eps)
+                if residual is None:
+                    continue
+
+                if stats is not None:
+                    stats.labels_feasible += 1
+                next_labels.append(
+                    ResidualLabel(
+                        stage=stage,
+                        reduced_cost=rc,
+                        quantities=q_new,
+                        total_length=lb.total_length + unit_length * q,
+                        residual=residual,
+                    )
+                )
+
+        if options.use_dominance:
+            next_labels = _apply_residual_dominance(next_labels, options.eps, stats=stats)
+
+        current_labels = next_labels
+        if not current_labels:
+            break
+
+    patterns: List[LayerPattern] = []
+    for lb in current_labels:
+        if lb.stage != len(ordered_types):
+            continue
+        if lb.total_length > layer.layer_length_limit + options.eps:
+            continue
+        patterns.append(
+            LayerPattern(
+                layer_id=layer.layer_id,
+                quantities=dict(lb.quantities),
+                reduced_cost=lb.reduced_cost,
+                best_length=lb.total_length,
+                shape_params=dict(layer.shape_params),
+            )
+        )
+
+    return patterns
+
+
+def generate_layer_patterns_residual(
+    layer: LayerSpec,
+    duals: DualValues,
+    options: LabelingOptions = LabelingOptions(use_residual_profile=True),
+    cut_evaluator: Optional[CutEvaluator] = None,
+    stats: Optional[LabelingStats] = None,
+) -> List[LayerPattern]:
+    """Generate layer patterns with residual-profile labels.
+
+    The dynamic chunking geometry is preprocessed into monotone interval
+    resources. Each label stores the remaining residual capacity vector, so
+    extension feasibility is a componentwise residual-capacity check rather
+    than a DFS feasibility search.
+    """
+
+    if options.use_cuts:
+        raise ValueError("Residual-profile dominance is disabled for use_cuts=True.")
+    if cut_evaluator is not None:
+        raise ValueError("Residual-profile generation does not support cut_evaluator.")
+
+    if options.use_height_order:
+        ordered_types = sorted(layer.car_types, key=lambda i: (-float(layer.car_heights.get(i, 0.0)), i))
+    else:
+        ordered_types = list(layer.car_types)
+    resource_model = build_layer_resource_model(layer, interval_profile=options.residual_profile_mode)
+    resource_count = len(resource_model.capacities)
+
+    root_quantities = {i: 0 for i in ordered_types}
+    root_label = ResidualLabel(
+        stage=0,
+        reduced_cost=-duals.gamma / 2.0,
+        quantities=root_quantities,
+        total_length=0.0,
+        residual=resource_model.capacities,
+    )
+
+    current_labels: List[ResidualLabel] = [root_label]
+
+    for stage, car_type in enumerate(ordered_types, start=1):
+        next_labels: List[ResidualLabel] = []
+        choices = resource_model.choices_by_type.get(car_type, ())
+        max_q = min(options.max_units_per_type, int(layer.max_quantity_by_type.get(car_type, options.max_units_per_type)))
+        unit_resource = layer.car_lengths[car_type] + resource_model.delta
+        unit_length = layer.car_lengths[car_type]
+        coef = unit_length + duals.alpha.get(car_type, 0.0) + duals.beta.get(car_type, 0.0) + duals.branch_q.get(car_type, 0.0)
+        remaining = ordered_types[stage:]
+
+        for lb in current_labels:
+            for q in range(0, max_q + 1):
+                q_new = dict(lb.quantities)
+                q_new[car_type] = q
+
+                rc = lb.reduced_cost - coef * q
+                if q > 0:
+                    rc -= duals.branch_a.get(car_type, 0.0)
+
+                if options.use_rc_bound:
+                    rc_lb = _future_reduced_cost_lower_bound(rc, remaining, layer, duals, options)
+                    if rc_lb >= -options.eps:
+                        if stats is not None:
+                            stats.labels_pruned_by_bound += 1
+                        continue
+
+                total_length = lb.total_length + unit_length * q
+                residual_children: List[Tuple[float, ...]] = []
+                for consumption in _placement_consumptions(choices, q, unit_resource, resource_count):
+                    residual = _apply_consumption(lb.residual, consumption, options.eps)
+                    if residual is None:
+                        continue
+                    residual_children.append(residual)
+
+                if options.use_local_residual_skyline:
+                    residual_children = _local_residual_skyline(residual_children, options.eps, stats=stats)
+
+                for residual in residual_children:
+                    if stats is not None:
+                        stats.labels_feasible += 1
+                    next_labels.append(
+                        ResidualLabel(
+                            stage=stage,
+                            reduced_cost=rc,
+                            quantities=q_new,
+                            total_length=total_length,
+                            residual=residual,
+                        )
+                    )
+
+        if options.use_dominance:
+            next_labels = _apply_residual_dominance(next_labels, options.eps, stats=stats)
+
+        current_labels = next_labels
+        if not current_labels:
+            break
+
+    best_by_quantities: Dict[Tuple[Tuple[int, int], ...], LayerPattern] = {}
+    for lb in current_labels:
+        if lb.stage != len(ordered_types):
+            continue
+        if lb.total_length > layer.layer_length_limit + options.eps:
+            continue
+        key = tuple(sorted((i, q) for i, q in lb.quantities.items() if q > 0))
+        pattern = LayerPattern(
+            layer_id=layer.layer_id,
+            quantities=dict(lb.quantities),
+            reduced_cost=lb.reduced_cost,
+            best_length=lb.total_length,
+            shape_params=dict(layer.shape_params),
+        )
+        old = best_by_quantities.get(key)
+        if old is None or pattern.reduced_cost < old.reduced_cost - options.eps:
+            best_by_quantities[key] = pattern
+
+    return list(best_by_quantities.values())
 
 
 def generate_layer_patterns(
@@ -161,6 +625,7 @@ def generate_layer_patterns(
     bs: BSEvaluator,
     options: LabelingOptions = LabelingOptions(),
     cut_evaluator: Optional[CutEvaluator] = None,
+    stats: Optional[LabelingStats] = None,
 ) -> List[LayerPattern]:
     """Generate feasible patterns for one layer using forward label extension.
 
@@ -210,6 +675,8 @@ def generate_layer_patterns(
                     
                 if not bs_result.feasible:
                     continue
+                if stats is not None:
+                    stats.labels_feasible += 1
 
                 if options.use_cuts and cut_evaluator is not None and not cut_evaluator.is_feasible(layer, q_new):
                     continue
@@ -227,13 +694,24 @@ def generate_layer_patterns(
                     rc -= duals.branch_a.get(car_type, 0.0)
 
                 if options.use_cuts and cut_evaluator is not None:
-                    rc += cut_evaluator.reduced_cost_shift(layer, q_new, duals)
+                    rc += cut_evaluator.reduced_cost_shift(layer, q_new, duals) - cut_evaluator.reduced_cost_shift(
+                        layer, lb.quantities, duals
+                    )
 
                 remaining = ordered_types[stage:]
-                if bs_result.reachable_types is not None:
+                if options.use_rc_bound and not options.use_cuts:
+                    rc_lb = _future_reduced_cost_lower_bound(rc, remaining, layer, duals, options)
+                    if rc_lb >= -options.eps:
+                        if stats is not None:
+                            stats.labels_pruned_by_bound += 1
+                        continue
+
+                if options.compute_reachable_types and bs_result.reachable_types is not None:
                     reachable_types = set(v for v in bs_result.reachable_types if v in remaining)
+                elif options.compute_reachable_types:
+                    reachable_types = _infer_reachable_types(layer, q_new, remaining, bs, options, stats=stats)
                 else:
-                    reachable_types = _infer_reachable_types(layer, q_new, remaining, bs, options)
+                    reachable_types = set(remaining)
 
                 next_labels.append(
                     Label(
@@ -246,7 +724,7 @@ def generate_layer_patterns(
                 )
 
         if options.use_dominance:
-            next_labels = _apply_dominance(next_labels, ordered_types, options.eps)
+            next_labels = _apply_dominance(next_labels, ordered_types, options.eps, stats=stats)
 
         current_labels = next_labels
         if not current_labels:

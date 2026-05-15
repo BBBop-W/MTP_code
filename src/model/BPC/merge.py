@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import sys
 from pathlib import Path
@@ -30,6 +30,7 @@ def merge_first_feasible(
     lower_patterns: List[LayerPattern],
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
+    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
 ) -> Optional[MergedPattern]:
     """Early-stop merge as requested.
 
@@ -60,11 +61,10 @@ def merge_first_feasible(
         if u_deck and l_deck and u_deck != l_deck:
             continue
 
-        rc = u.reduced_cost + l.reduced_cost
+        merged_q = _merge_quantities(u.quantities, l.quantities)
+        rc = reduced_cost_fn(u, l, merged_q) if reduced_cost_fn is not None else u.reduced_cost + l.reduced_cost
         if require_negative_reduced_cost and rc >= -1e-5:
             continue
-
-        merged_q = _merge_quantities(u.quantities, l.quantities)
 
         deck = u_deck if u_deck else l_deck
         return MergedPattern(deck=deck, quantities=merged_q, reduced_cost=rc, upper=u, lower=l)
@@ -76,6 +76,7 @@ def merge_patterns_for_mode(
     patterns_by_layer: Dict[str, List[LayerPattern]],
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
+    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
 ) -> Optional[MergedPattern]:
     """
     Given a specific mode (e.g. 'h-h', 'h-m', 'm-h', 'm-m'), extract the matching
@@ -91,7 +92,8 @@ def merge_patterns_for_mode(
         upper_patterns, 
         lower_patterns, 
         max_total_by_type, 
-        require_negative_reduced_cost
+        require_negative_reduced_cost,
+        reduced_cost_fn=reduced_cost_fn,
     )
 
 

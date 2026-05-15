@@ -72,9 +72,14 @@ def load_vns_columns(master, csv_path: Path, prefix: str):
     print(f"Loaded {added_count} columns from {csv_path.name} ({prefix})")
 
 
-def run_bpc(instance_name: str, use_warmstart: bool = True):
+def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1, independent_mode_split: bool = True):
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
+
+    import src.model.BPC.feasibility_check as feas
+    feas.GLOBAL_NUM_SPLITS = num_splits
+    feas.GLOBAL_INDEP_MODE = independent_mode_split
+    feas._SEGMENTS_CACHE.clear()
     
     if use_warmstart:
         # 1. Run C++ VNS Solver
@@ -85,7 +90,7 @@ def run_bpc(instance_name: str, use_warmstart: bool = True):
             print(f"[Error] VNS executable not found at {vns_exe}. Please compile it first.")
             sys.exit(1)
             
-        vns_cmd = [str(vns_exe), instance_name]
+        vns_cmd = [str(vns_exe), instance_name, str(num_splits), str(int(independent_mode_split))]
         try:
             # Run VNS and pipe output to console
             subprocess.run(vns_cmd, cwd=str(PROJECT_ROOT / "VNS_cpp"), check=True)
@@ -156,5 +161,19 @@ if __name__ == "__main__":
         target_instance = args[0]
         if len(args) > 1 and args[1].lower() in ['false', '0', 'no', 'off']:
             use_ws = False
+        if len(args) > 2:
+            try:
+                num_splits = int(args[2])
+            except ValueError:
+                num_splits = 1
+        else:
+            num_splits = 1
+        if len(args) > 3:
+            independent_mode_split = args[3].lower() not in ['false', '0', 'no', 'off']
+        else:
+            independent_mode_split = True
+    else:
+        num_splits = 1
+        independent_mode_split = True
 
-    run_bpc(target_instance, use_warmstart=use_ws)
+    run_bpc(target_instance, use_warmstart=use_ws, num_splits=num_splits, independent_mode_split=independent_mode_split)

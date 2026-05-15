@@ -39,6 +39,7 @@ class MasterLPSolution:
     dual_branch_q: Dict[int, float] = field(default_factory=dict)
     dual_eta: float = 0.0
     dual_sigma: Dict[Tuple[int, int, int], float] = field(default_factory=dict)
+    unmet_values: Dict[int, float] = field(default_factory=dict)
     
 @dataclass
 class CGStats:
@@ -48,6 +49,12 @@ class CGStats:
     labeling_time: float = 0.0
     bs_time: float = 0.0
     merge_time: float = 0.0
+    labels_feasible: int = 0
+    labels_pruned_by_bound: int = 0
+    labels_pruned_by_dominance: int = 0
+    labels_pruned_by_local_skyline: int = 0
+    labels_after_dominance: int = 0
+    reachability_probes: int = 0
 
 class MasterProblem:
     def __init__(self, car_info: pd.DataFrame, carriage_num: int, penalty_unmet: float = 1e6) -> None:
@@ -62,6 +69,7 @@ class MasterProblem:
             i: int(self.car_info.iloc[i - 1]["mandatory"] + self.car_info.iloc[i - 1]["optional"])
             for i in self.I
         }
+        self.max_units_per_compartment = 10
 
         self.columns: Dict[str, PatternColumn] = {}
 
@@ -71,27 +79,11 @@ class MasterProblem:
         self.columns[column.column_id] = column
 
     def seed_initial_columns(self) -> None:
-        for i in self.I:
-            # Seed columns as 'upper' horizontal to just provide feasibility
-            col = PatternColumn(
-                column_id=f"seed_upper_i{i}",
-                q={k: (1 if k == i else 0) for k in self.I},
-                cost=-self.length[i],
-                compartment="upper",
-                deck_mode="h-h",
-                metadata={"source": "seed"},
-            )
-            self.add_column(col)
-            # Empty lower to match
-            col_empty = PatternColumn(
-                column_id=f"seed_lower_empty_{i}",
-                q={},
-                cost=0.0,
-                compartment="lower",
-                deck_mode="h-h",
-                metadata={"source": "seed"},
-            )
-            self.add_column(col_empty)
+        # The master is initialized with artificial unmet-demand variables, so
+        # feasibility does not require unpriced physical seed columns. Leaving
+        # this empty avoids injecting columns that have not passed the layer
+        # geometry checks.
+        return
 
     def solve_lp(
         self,
@@ -191,6 +183,7 @@ class MasterProblem:
             )
 
         theta_values = {cid: float(theta[cid].X) for cid in self.columns}
+        unmet_values = {i: float(unmet[i].X) for i in self.I}
         dual_alpha = {i: float(mandatory_constr[i].Pi) for i in self.I}
         dual_beta = {i: float(optional_constr[i].Pi) for i in self.I}
         dual_gamma = {p: float(wagon_map_constr[p].Pi) for p in modes}
@@ -213,7 +206,8 @@ class MasterProblem:
             dual_branch_a={}, 
             dual_branch_q=dual_branch_q,
             dual_eta=0.0,
-            dual_sigma=dual_sigma
+            dual_sigma=dual_sigma,
+            unmet_values=unmet_values,
         )
 
     def choose_branch_var(self, solution: MasterLPSolution, eps: float = 1e-5) -> tuple[str, int, float] | None:
@@ -235,8 +229,13 @@ class MasterProblem:
 
     def is_integral(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         if not solution.theta_values:
-            return True
+            return not self.has_unmet_demand(solution, eps)
+        if self.has_unmet_demand(solution, eps):
+            return False
         return self.choose_branch_var(solution, eps) is None
+
+    def has_unmet_demand(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
+        return any(value > eps for value in solution.unmet_values.values())
 
 
 class ColumnGenerationEngine:
@@ -279,9 +278,21 @@ class ColumnGenerationEngine:
             
             self.stats.labeling_time += self.pricing_engine.stats.labeling_time
             self.stats.bs_time += self.pricing_engine.stats.bs_time
+            self.stats.labels_feasible += self.pricing_engine.stats.labels_feasible
+            self.stats.labels_pruned_by_bound += self.pricing_engine.stats.labels_pruned_by_bound
+            self.stats.labels_pruned_by_dominance += self.pricing_engine.stats.labels_pruned_by_dominance
+            self.stats.labels_pruned_by_local_skyline += self.pricing_engine.stats.labels_pruned_by_local_skyline
+            self.stats.labels_after_dominance += self.pricing_engine.stats.labels_after_dominance
+            self.stats.reachability_probes += self.pricing_engine.stats.reachability_probes
             
             self.pricing_engine.stats.labeling_time = 0.0
             self.pricing_engine.stats.bs_time = 0.0
+            self.pricing_engine.stats.labels_feasible = 0
+            self.pricing_engine.stats.labels_pruned_by_bound = 0
+            self.pricing_engine.stats.labels_pruned_by_dominance = 0
+            self.pricing_engine.stats.labels_pruned_by_local_skyline = 0
+            self.pricing_engine.stats.labels_after_dominance = 0
+            self.pricing_engine.stats.reachability_probes = 0
 
             if not new_columns:
                 self._log_cg(f"Iter={it}: no new column found (reduced cost >= 0). Stop CG.")

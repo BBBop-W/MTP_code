@@ -71,7 +71,8 @@ class EarlyStopPricingEngine:
             alpha=lp_solution.dual_alpha, 
             beta=lp_solution.dual_beta, 
             gamma=lp_solution.dual_gamma,
-            branch_a=lp_solution.dual_branch_a,
+            # a_i belongs to a merged full-wagon column, so it is priced after merge.
+            branch_a={},
             branch_q=lp_solution.dual_branch_q
         )
         car_heights = {i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I}
@@ -130,6 +131,8 @@ class EarlyStopPricingEngine:
                 upper_patterns=subpatterns.get((item.deck, "upper"), []),
                 lower_patterns=patterns,
                 max_total_by_type=master.U,
+                lp_solution=lp_solution,
+                master=master,
             )
             self.stats.merge_time += (time.time() - t0)
 
@@ -153,6 +156,8 @@ class EarlyStopPricingEngine:
         upper_patterns: List[LayerPattern],
         lower_patterns: List[LayerPattern],
         max_total_by_type: Dict[int, int],
+        lp_solution: MasterLPSolution,
+        master: MasterProblem,
     ) -> Optional[MergedPattern]:
         self.stats.merge_attempt_pairs += 1
         self._log(
@@ -165,6 +170,7 @@ class EarlyStopPricingEngine:
             lower_patterns=lower_patterns,
             max_total_by_type=max_total_by_type,
             require_negative_reduced_cost=True,
+            reduced_cost_fn=lambda _u, _l, q: self._full_column_reduced_cost(q, lp_solution, master),
         )
         if merged is None:
             return None
@@ -172,6 +178,26 @@ class EarlyStopPricingEngine:
             self._log(f"Merge rejected by deck mismatch: merged={merged.deck}, expected={deck}")
             return None
         return merged
+
+    def _full_column_reduced_cost(
+        self,
+        quantities: Dict[int, int],
+        lp_solution: MasterLPSolution,
+        master: MasterProblem,
+    ) -> float:
+        rc = -float(lp_solution.dual_gamma or 0.0)
+        for i in master.I:
+            q = int(quantities.get(i, 0))
+            if q <= 0:
+                continue
+            rc -= (
+                master.length[i]
+                + lp_solution.dual_alpha.get(i, 0.0)
+                + lp_solution.dual_beta.get(i, 0.0)
+                + lp_solution.dual_branch_q.get(i, 0.0)
+            ) * q
+            rc -= lp_solution.dual_branch_a.get(i, 0.0)
+        return rc
 
     def _to_column(self, merged: MergedPattern, master: MasterProblem) -> Optional[PatternColumn]:
         signature = tuple(int(merged.quantities.get(i, 0)) for i in master.I)

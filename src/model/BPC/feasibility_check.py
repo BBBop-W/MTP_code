@@ -7,6 +7,7 @@ import itertools
 from math import inf
 from dataclasses import dataclass
 
+import pandas as pd
 import gurobipy as gp
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -19,6 +20,10 @@ from src.utility.config import config as Config
 
 if TYPE_CHECKING:
     from src.model.BPC.labeling import BSResult, LayerSpec
+
+_SEGMENTS_CACHE = {}
+GLOBAL_NUM_SPLITS = 1
+GLOBAL_INDEP_MODE = True
 
 def _recurse_check_layer_bs(
     compartment: str, 
@@ -335,6 +340,177 @@ def _simple_check_layer_bs(
     return None
 
 
+def _get_segments_for_layer(car_heights: Dict[int, float]):
+    unique_heights = tuple(sorted(set(car_heights.values())))
+    cache_key = (unique_heights, GLOBAL_NUM_SPLITS, GLOBAL_INDEP_MODE)
+    if cache_key in _SEGMENTS_CACHE:
+        return _SEGMENTS_CACHE[cache_key]
+
+    df = pd.DataFrame({"height": list(unique_heights)})
+    from src.utility.dynamic_segmentation import get_model_segments
+    seg = get_model_segments(df, num_splits=GLOBAL_NUM_SPLITS, independent_mode_split=GLOBAL_INDEP_MODE)
+    _SEGMENTS_CACHE[cache_key] = seg
+    return seg
+
+
+def dynamic_recursive_bs(
+    compartment: str,
+    deck_mode: str,
+    quantities: Dict[int, int],
+    car_lengths: Dict[int, float],
+    car_heights: Dict[int, float],
+    segments: dict = None,
+) -> float | None:
+    """Dynamic interval-capacity DFS used by the multi-component geometry."""
+    cars = []
+    for cid, q in quantities.items():
+        for _ in range(q):
+            cars.append(cid)
+
+    if not cars:
+        return 0.0
+    if len(cars) > 8:
+        return None
+
+    cars.sort(key=lambda c: car_heights[c], reverse=True)
+
+    if "-" in deck_mode:
+        mode_left, mode_right = deck_mode.split("-")
+    else:
+        m = "h" if deck_mode == "horizontal" else "m"
+        mode_left = mode_right = m
+
+    pi_left = 1 if mode_left == "m" else 0
+    pi_right = 1 if mode_right == "m" else 0
+    delta = 400.0
+    total_length = sum(car_lengths[c] for c in cars)
+
+    if segments is None:
+        segments = _get_segments_for_layer(car_heights)
+
+    central = segments[compartment]["central"]
+    blocks = segments[compartment]["blocks"]
+    n_blocks = len(blocks)
+
+    limit_left = [central["h_m"] if pi_left else central["h_h"]]
+    limit_right = [central["h_m"] if pi_right else central["h_h"]]
+    for block in blocks:
+        limit_left.append(block["h_m"] if pi_left else block["h_h"])
+        limit_right.append(block["h_m"] if pi_right else block["h_h"])
+
+    actual_limit_central = min(limit_left[0], limit_right[0])
+    lengths = [central["len"]] + [block["len"] for block in blocks]
+
+    car_choices = []
+    for c in cars:
+        height = car_heights[c]
+        max_l = -1
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_left[idx]:
+                max_l = idx
+                break
+        if max_l == -1 and height <= actual_limit_central:
+            max_l = 0
+
+        max_r = -1
+        for idx in range(n_blocks, 0, -1):
+            if height <= limit_right[idx]:
+                max_r = idx
+                break
+        if max_r == -1 and height <= actual_limit_central:
+            max_r = 0
+
+        if max_l == -1 and max_r == -1:
+            return None
+
+        choices = []
+        if max_l == 0 and max_r == 0:
+            choices.append(("central", 0))
+        else:
+            if max_l >= 0:
+                choices.append(("left", max_l))
+            if max_r >= 0:
+                choices.append(("right", max_r))
+        car_choices.append(list(set(choices)))
+
+    intervals = []
+    for l_idx in range(n_blocks + 1):
+        for r_idx in range(n_blocks + 1):
+            if compartment == "upper":
+                enforce_left = (l_idx == n_blocks) or (pi_left == 1)
+                enforce_right = (r_idx == n_blocks) or (pi_right == 1)
+                if not (enforce_left and enforce_right):
+                    continue
+
+            if l_idx == n_blocks and r_idx == n_blocks:
+                mod = -delta
+            elif l_idx == n_blocks or r_idx == n_blocks:
+                mod = 0.0
+            else:
+                mod = delta
+
+            cap = lengths[0] + sum(lengths[1:l_idx + 1]) + sum(lengths[1:r_idx + 1]) + mod
+            intervals.append((l_idx, r_idx, cap))
+
+    car_choice_hits = []
+    for car_id, choices in zip(cars, car_choices):
+        choice_hits = []
+        c_len = car_lengths[car_id] + delta
+        for side, block_idx in choices:
+            hits = []
+            for interval_idx, (l_int, r_int, _cap) in enumerate(intervals):
+                inside = (
+                    side == "central"
+                    or (side == "left" and block_idx <= l_int)
+                    or (side == "right" and block_idx <= r_int)
+                )
+                if inside:
+                    hits.append(interval_idx)
+            choice_hits.append((c_len, hits))
+        car_choice_hits.append(choice_hits)
+
+    caps = [cap for _l, _r, cap in intervals]
+
+    def dfs(car_idx: int, usage: List[float]) -> bool:
+        if car_idx == len(cars):
+            return True
+
+        for c_len, hits in car_choice_hits[car_idx]:
+            if any(usage[j] + c_len > caps[j] + 1e-5 for j in hits):
+                continue
+            for j in hits:
+                usage[j] += c_len
+            if dfs(car_idx + 1, usage):
+                return True
+            for j in hits:
+                usage[j] -= c_len
+        return False
+
+    if dfs(0, [0.0] * len(intervals)):
+        return total_length
+    return None
+
+
+def _recurse_check_layer_bs(
+    compartment: str,
+    deck_mode: str,
+    quantities: Dict[int, int],
+    car_lengths: Dict[int, float],
+    car_heights: Dict[int, float],
+) -> float | None:
+    return dynamic_recursive_bs(compartment, deck_mode, quantities, car_lengths, car_heights)
+
+
+def _simple_check_layer_bs(
+    compartment: str,
+    deck_mode: str,
+    quantities: Dict[int, int],
+    car_lengths: Dict[int, float],
+    car_heights: Dict[int, float],
+) -> float | None:
+    return dynamic_recursive_bs(compartment, deck_mode, quantities, car_lengths, car_heights)
+
+
 class HierarchicalBSEvaluator:
     """Simplified 2^N Search Evaluator for maximum 8 cars.
     Wrapper to match the labeling.py API logic.
@@ -515,6 +691,94 @@ def check_layer_gurobi(
     if model.status == gp.GRB.OPTIMAL:
         return sum(car_lengths[i] * quantities[i] for i in I)
     return None
+
+
+def check_layer_gurobi(
+    compartment: str,
+    deck_mode: str,
+    quantities: Dict[int, int],
+    car_lengths: Dict[int, float],
+    car_heights: Dict[int, float],
+    segments: dict = None,
+) -> float | None:
+    model = gp.Model("single_layer_check_dynamic")
+    model.Params.OutputFlag = 0
+
+    i_list = [i for i, q in quantities.items() if q > 0]
+    if not i_list:
+        return 0.0
+
+    if segments is None:
+        segments = _get_segments_for_layer(car_heights)
+
+    central = segments[compartment]["central"]
+    blocks = segments[compartment]["blocks"]
+    n_blocks = len(blocks)
+
+    if "-" in deck_mode:
+        mode_left, mode_right = deck_mode.split("-")
+    else:
+        m = "h" if deck_mode == "horizontal" else "m"
+        mode_left = mode_right = m
+
+    pi_left = 1 if mode_left == "m" else 0
+    pi_right = 1 if mode_right == "m" else 0
+
+    limit_left = [central["h_m"] if pi_left else central["h_h"]]
+    limit_right = [central["h_m"] if pi_right else central["h_h"]]
+    for block in blocks:
+        limit_left.append(block["h_m"] if pi_left else block["h_h"])
+        limit_right.append(block["h_m"] if pi_right else block["h_h"])
+
+    lengths = [central["len"]] + [block["len"] for block in blocks]
+    region_names = ["central"] + [f"left_{idx}" for idx in range(1, n_blocks + 1)] + [
+        f"right_{idx}" for idx in range(1, n_blocks + 1)
+    ]
+
+    x = model.addVars(i_list, region_names, vtype=gp.GRB.INTEGER, lb=0, name="x")
+    model.addConstrs((gp.quicksum(x[i, h] for h in region_names) == quantities[i] for i in i_list), name="qty")
+
+    actual_limit_central = min(limit_left[0], limit_right[0])
+    for i in i_list:
+        if car_heights[i] > actual_limit_central:
+            model.addConstr(x[i, "central"] == 0)
+        for idx in range(1, n_blocks + 1):
+            if car_heights[i] > limit_left[idx]:
+                model.addConstr(x[i, f"left_{idx}"] == 0)
+            if car_heights[i] > limit_right[idx]:
+                model.addConstr(x[i, f"right_{idx}"] == 0)
+
+    delta = 400.0
+    for l_idx in range(n_blocks + 1):
+        for r_idx in range(n_blocks + 1):
+            if compartment == "upper":
+                enforce_left = (l_idx == n_blocks) or (pi_left == 1)
+                enforce_right = (r_idx == n_blocks) or (pi_right == 1)
+                if not (enforce_left and enforce_right):
+                    continue
+
+            if l_idx == n_blocks and r_idx == n_blocks:
+                mod = -delta
+            elif l_idx == n_blocks or r_idx == n_blocks:
+                mod = 0.0
+            else:
+                mod = delta
+
+            cap = lengths[0] + sum(lengths[1:l_idx + 1]) + sum(lengths[1:r_idx + 1]) + mod
+            interval_regions = ["central"] + [f"left_{idx}" for idx in range(1, l_idx + 1)] + [
+                f"right_{idx}" for idx in range(1, r_idx + 1)
+            ]
+            model.addConstr(
+                gp.quicksum(x[i, h] * (car_lengths[i] + delta) for i in i_list for h in interval_regions) <= cap
+            )
+
+    model.setObjective(0.0, gp.GRB.MAXIMIZE)
+    model.optimize()
+
+    if model.status == gp.GRB.OPTIMAL:
+        return sum(car_lengths[i] * quantities[i] for i in i_list)
+    return None
+
 
 if __name__ == "__main__":
     from src.utility.generate_instance import load_candidates

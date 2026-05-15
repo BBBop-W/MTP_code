@@ -68,6 +68,13 @@ class BBTree:
         log_to_console: bool = True,
         use_dominance: bool = True,
         use_cuts: bool = False,
+        use_rc_bound: bool = True,
+        use_residual_profile: bool = True,
+        use_outer_inner_profile: bool = False,
+        use_height_order: bool = True,
+        use_local_residual_skyline: bool = True,
+        residual_profile_mode: str = "full",
+        compute_reachable_types: bool = False,
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
         mip_gap_tol: float = 5e-6,
@@ -95,6 +102,13 @@ class BBTree:
         pricing_engine = EarlyStopPricingEngine(
             use_dominance=use_dominance,
             use_cuts=use_cuts,
+            use_rc_bound=use_rc_bound,
+            use_residual_profile=use_residual_profile,
+            use_outer_inner_profile=use_outer_inner_profile,
+            use_height_order=use_height_order,
+            use_local_residual_skyline=use_local_residual_skyline,
+            residual_profile_mode=residual_profile_mode,
+            compute_reachable_types=compute_reachable_types,
             verbose=print_subproblem_progress,
         )
         

@@ -201,7 +201,8 @@ def generate_layer_patterns(
                 length_sum = sum(layer.car_lengths[c] * qty for c, qty in q_new.items())
                 
                 # Check if the entire group fits inside the central undivided region (E for upper, C for lower)
-                safe_len = 14900.0 if layer.shape_params.get("compartment", "lower") == "upper" else 12400.0
+                # Match dynamic_segmentation's physical central flat regions.
+                safe_len = 11400.0 if layer.shape_params.get("compartment", "lower") == "upper" else 10867.0
                 if length_sum + 400.0 * total_cars <= safe_len:
                     bs_result = BSResult(feasible=True, best_length=length_sum, reachable_types=set(ordered_types))
                 else:

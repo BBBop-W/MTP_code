@@ -64,7 +64,19 @@ def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
                 
     print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix})")
 
-def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1, independent_mode_split: bool = True):
+def run_bpc(
+    instance_name: str,
+    use_warmstart: bool = True,
+    num_splits: int = 1,
+    independent_mode_split: bool = True,
+    use_rc_bound: bool = True,
+    use_residual_profile: bool = True,
+    use_outer_inner_profile: bool = False,
+    use_height_order: bool = True,
+    use_local_residual_skyline: bool = True,
+    residual_profile_mode: str = "full",
+    compute_reachable_types: bool = False,
+):
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
 
@@ -97,6 +109,13 @@ def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1,
         log_to_console=False,
         use_dominance=True,
         use_cuts=False,
+        use_rc_bound=use_rc_bound,
+        use_residual_profile=use_residual_profile,
+        use_outer_inner_profile=use_outer_inner_profile,
+        use_height_order=use_height_order,
+        use_local_residual_skyline=use_local_residual_skyline,
+        residual_profile_mode=residual_profile_mode,
+        compute_reachable_types=compute_reachable_types,
         print_bb_progress=True,
         print_subproblem_progress=False
     )
@@ -133,6 +152,16 @@ def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1,
     print(f"Pricing Total Time : {bbtree.cg_engine.stats.pricing_time:.2f} s")
     print(f"  ├─ Labeling Time : {bbtree.cg_engine.stats.labeling_time:.2f} s")
     print(f"  ├─ Feas Check BS : {bbtree.cg_engine.stats.bs_time:.2f} s")
+    print(f"  ├─ Bound Pruned  : {bbtree.cg_engine.stats.labels_pruned_by_bound}")
+    print(f"  ├─ Dom. Pruned   : {bbtree.cg_engine.stats.labels_pruned_by_dominance}")
+    print(f"  ├─ Local Pruned  : {bbtree.cg_engine.stats.labels_pruned_by_local_skyline}")
+    print(f"  ├─ Kept Labels   : {bbtree.cg_engine.stats.labels_after_dominance}")
+    print(f"  ├─ Reach Probes  : {bbtree.cg_engine.stats.reachability_probes}")
+    print(f"  ├─ Residual Prof.: {use_residual_profile}")
+    print(f"  ├─ Outer-Inner   : {use_outer_inner_profile}")
+    print(f"  ├─ Height Order  : {use_height_order}")
+    print(f"  ├─ Local Skyline : {use_local_residual_skyline}")
+    print(f"  ├─ Profile Mode  : {residual_profile_mode}")
     print("==============================================\n")
 
 if __name__ == "__main__":

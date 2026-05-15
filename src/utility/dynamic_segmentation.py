@@ -143,12 +143,69 @@ class CarriageGeometry:
             
         return segments
 
+    def generate_even_side_segments(self, num_blocks: int, layer: str):
+        """
+        Generate exactly ``num_blocks`` side components on each side.
+        Blocks are equal-length on each side and indexed from center to end.
+        """
+        if num_blocks <= 0:
+            raise ValueError("num_blocks must be positive")
+
+        if layer == 'upper':
+            central_len = self.deck_m_groove_length
+        else:
+            central_len = self.floor_groove_length
+
+        central_start_x = self.center_x - (central_len / 2.0)
+        cut_points = np.linspace(0.0, central_start_x, num_blocks + 1)
+
+        c_h = self.get_clearance(self.center_x, layer, 'h')
+        c_m = self.get_clearance(self.center_x, layer, 'm')
+        segments = [{
+            "name": "central",
+            "len": round(central_len, 2),
+            "h_h": round(c_h, 2),
+            "h_m": round(c_m, 2)
+        }]
+
+        outward_idx = 1
+        for i in range(len(cut_points) - 1, 0, -1):
+            right_x = float(cut_points[i])
+            left_x = float(cut_points[i - 1])
+            length = right_x - left_x
+            h_h = self.get_clearance(left_x, layer, 'h')
+            h_m = self.get_clearance(left_x, layer, 'm')
+            segments.append({
+                "name": f"block_{outward_idx}",
+                "len": round(length, 2),
+                "h_h": round(h_h, 2),
+                "h_m": round(h_m, 2)
+            })
+            outward_idx += 1
+
+        return segments
+
 
 def get_model_segments(car_info_df: pd.DataFrame, num_splits: int, independent_mode_split: bool) -> dict:
     """
     High-level API for Gurobi and BPC to get the dynamic segments based on car instance.
     """
     geom = CarriageGeometry()
+
+    if not independent_mode_split:
+        lower_segments = geom.generate_even_side_segments(num_splits, layer='lower')
+        upper_segments = geom.generate_even_side_segments(num_splits, layer='upper')
+        return {
+            "lower": {
+                "central": lower_segments[0],
+                "blocks": lower_segments[1:]
+            },
+            "upper": {
+                "central": upper_segments[0],
+                "blocks": upper_segments[1:]
+            }
+        }
+
     unique_heights = sorted(car_info_df["height"].unique().tolist())
     
     # 1. Select heights based on num_splits
