@@ -12,21 +12,16 @@ from src.model.BPC_layer.labeling import CutEvaluator, DualValues, LayerSpec
 class CutState:
     """Dual-like coefficients for optional pricing cuts.
 
-    sigma_by_subset: dual values for 3-SR cuts, keyed by (compartment, sorted type tuple).
-    compartment must be 'upper' or 'lower'.
+    eta_sum: dual of the generalized wagon-count lower-bound cut.
+    sigma_by_subset: dual values for global 3-SR cuts, keyed by sorted type tuples.
     """
 
     eta_sum: float = 0.0
-    sigma_by_subset: Dict[Tuple[str, Tuple[int, int, int]], float] = field(default_factory=dict)
+    sigma_by_subset: Dict[Tuple[int, int, int], float] = field(default_factory=dict)
 
 
 class SimpleCutEvaluator(CutEvaluator):
-    """Cut evaluator for LayerMaster.
-
-    Implemented behaviors:
-    1) Feasibility filter: No total max limits applied here since it's an unconstrained layer length check.
-    2) Reduced-cost correction terms: 3-SR style adjustments based on compartment.
-    """
+    """Cut evaluator for compartment pricing."""
 
     def __init__(
         self,
@@ -48,30 +43,21 @@ class SimpleCutEvaluator(CutEvaluator):
         return True
 
     def reduced_cost_shift(self, layer: LayerSpec, quantities: Dict[int, int], duals: DualValues) -> float:
-        # Reduced cost adjustment:
-        #   - sum sigma_c * floor(0.5 * sum_{i in Ic'} q_i)
         shift = 0.0
+        if layer.shape_params.get("compartment", "lower") == "upper":
+            shift -= float(self.cut_state.eta_sum)
 
         sigma_items = self.cut_state.sigma_by_subset.items()
         if not sigma_items:
             return shift
 
-        comp = layer.shape_params.get("compartment", "lower")
-
-        for (cut_comp, subset), sigma in sigma_items:
-            if cut_comp != comp:
-                continue
-                
+        for subset, sigma in sigma_items:
             val = 0
             for i in subset:
                 total_i = self.max_total_by_type.get(i, 0)
-                if total_i <= 0:
-                    continue
-                # In standard 3-SR, we sum the quantities of cars in the subset and divide by 2.
-                # We assume a car occupies >= half of the wagon/layer, so quantity > 0 means it's present.
-                if quantities.get(i, 0) > 0:
-                    val += quantities[i]
-                    
+                if total_i > 0 and quantities.get(i, 0) > total_i / 2.0:
+                    val += 1
+
             coeff = floor(0.5 * val)
             shift -= float(sigma) * coeff
 

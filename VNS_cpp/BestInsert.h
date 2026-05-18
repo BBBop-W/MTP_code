@@ -32,7 +32,9 @@ public:
                 for (auto c : cnode) {
                     BestRouteResult best_insert = BestToRoute(*c, v, p);
                     if (best_insert.best_place == -1) continue;
-                    InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor);
+                    if (!InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor)) {
+                        continue;
+                    }
                     v->var_mandatory -= 1;
                     result.CalculateSolutionObj(p);
                     inserted = true;
@@ -58,7 +60,9 @@ public:
                 for (auto c : cnode) {
                     BestRouteResult best_insert = BestToRoute(*c, v, p);
                     if (best_insert.best_place == -1) continue;
-                    InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor);
+                    if (!InsertCustomer(*c, v, best_insert.best_place, p, false, best_insert.best_floor)) {
+                        continue;
+                    }
                     v->var_optional -= 1;
                     result.CalculateSolutionObj(p);
                     inserted = true;

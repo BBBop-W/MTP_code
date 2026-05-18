@@ -34,13 +34,16 @@ class SolverPricingEngine:
         num_splits: int = 1,
         independent_mode_split: bool = True,
         max_units_per_compartment: int = 10,
+        max_columns_per_pricing: int = 1,
+        use_cuts: bool = False,
         verbose: bool = False,
     ) -> None:
         self.num_splits = int(num_splits)
         self.independent_mode_split = bool(independent_mode_split)
         self.max_units_per_compartment = int(max_units_per_compartment)
+        self.max_columns_per_pricing = 1
         self.verbose = verbose
-        self.options = SolverPricingOptions(use_cuts=False)
+        self.options = SolverPricingOptions(use_cuts=use_cuts)
         self.wagon_capacity_cut = self.max_units_per_compartment
         self.stats = SolverPricingStats()
         self._column_seq = 0
@@ -54,14 +57,25 @@ class SolverPricingEngine:
         if lp_solution.dual_gamma is None:
             return []
 
-        t0 = time.time()
-        column = self._solve_one_wagon(lp_solution, master)
-        self.stats.solver_time += time.time() - t0
-        if column is None:
-            return []
-        return [column]
+        columns: List[PatternColumn] = []
+        forbidden = list(self._seen_signatures)
+        for _ in range(self.max_columns_per_pricing):
+            t0 = time.time()
+            column = self._solve_one_wagon(lp_solution, master, forbidden)
+            self.stats.solver_time += time.time() - t0
+            if column is None:
+                break
+            signature = tuple(int(column.q.get(i, 0)) for i in master.I)
+            forbidden.append(signature)
+            columns.append(column)
+        return columns
 
-    def _solve_one_wagon(self, lp_solution: MasterLPSolution, master: MasterProblem) -> PatternColumn | None:
+    def _solve_one_wagon(
+        self,
+        lp_solution: MasterLPSolution,
+        master: MasterProblem,
+        forbidden_signatures: List[Tuple[int, ...]],
+    ) -> PatternColumn | None:
         car_info = master.car_info
         I = list(master.I)
         P = ["h-h", "h-m", "m-h", "m-m"]
@@ -147,6 +161,24 @@ class SolverPricingEngine:
         a = model.addVars(I, vtype=gp.GRB.BINARY, name="a")
         q = {i: gp.quicksum(x[i, h] for h in H) for i in I}
 
+        for forbid_idx, signature in enumerate(forbidden_signatures):
+            y_pos = model.addVars(I, vtype=gp.GRB.BINARY, name=f"forbid_pos[{forbid_idx}]")
+            y_neg = model.addVars(I, vtype=gp.GRB.BINARY, name=f"forbid_neg[{forbid_idx}]")
+            big_m = max(max(int(master.U[i]) for i in I), 2 * N) + 1
+            for i, value in zip(I, signature):
+                model.addConstr(
+                    q[i] - int(value) >= 1 - big_m * (1 - y_pos[i]),
+                    name=f"forbid_gt[{forbid_idx},{i}]",
+                )
+                model.addConstr(
+                    int(value) - q[i] >= 1 - big_m * (1 - y_neg[i]),
+                    name=f"forbid_lt[{forbid_idx},{i}]",
+                )
+            model.addConstr(
+                gp.quicksum(y_pos[i] + y_neg[i] for i in I) >= 1,
+                name=f"forbid_signature[{forbid_idx}]",
+            )
+
         model.addConstr(gp.quicksum(z[p] for p in P) == 1, name="deck_position")
         for i in I:
             model.addConstr(q[i] <= int(master.U[i]), name=f"type_upper[{i}]")
@@ -166,7 +198,31 @@ class SolverPricingEngine:
         model.addConstr(gp.quicksum(x[i, h] for i in I for h in H_lower) <= N, name="lower_quantity")
         model.addConstr(gp.quicksum(x[i, h] for i in I for h in H_upper) <= N, name="upper_quantity")
 
+        sr_terms: List[Tuple[float, gp.Var]] = []
+        if self.options.use_cuts:
+            for cut_idx, (subset, sigma) in enumerate(lp_solution.dual_sigma.items()):
+                if abs(float(sigma)) <= 1e-12:
+                    continue
+                high_vars = []
+                for i in subset:
+                    high = model.addVar(vtype=gp.GRB.BINARY, name=f"sr_high[{cut_idx},{i}]")
+                    threshold = int(master.U[i] // 2 + 1)
+                    max_q = int(master.U[i])
+                    if threshold <= 0 or max_q < threshold:
+                        model.addConstr(high == 0, name=f"sr_high_off[{cut_idx},{i}]")
+                    else:
+                        model.addConstr(q[i] >= threshold * high, name=f"sr_high_lb[{cut_idx},{i}]")
+                        model.addConstr(q[i] <= threshold - 1 + max_q * high, name=f"sr_high_ub[{cut_idx},{i}]")
+                    high_vars.append(high)
+                coeff = model.addVar(vtype=gp.GRB.BINARY, name=f"sr_coeff[{cut_idx}]")
+                count = gp.quicksum(high_vars)
+                model.addConstr(count >= 2 * coeff, name=f"sr_coeff_lb[{cut_idx}]")
+                model.addConstr(count <= 1 + 2 * coeff, name=f"sr_coeff_ub[{cut_idx}]")
+                sr_terms.append((float(sigma), coeff))
+
         rc = gp.LinExpr(-float(lp_solution.dual_gamma or 0.0))
+        if self.options.use_cuts:
+            rc -= float(lp_solution.dual_eta)
         for i in I:
             coef = (
                 master.length[i]
@@ -176,6 +232,8 @@ class SolverPricingEngine:
             )
             rc -= coef * q[i]
             rc -= lp_solution.dual_branch_a.get(i, 0.0) * a[i]
+        for sigma, coeff in sr_terms:
+            rc -= sigma * coeff
         model.setObjective(rc, gp.GRB.MINIMIZE)
         model.optimize()
         self.stats.solver_nodes += float(model.NodeCount)

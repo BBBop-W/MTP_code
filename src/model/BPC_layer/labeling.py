@@ -18,7 +18,7 @@ class DualValues:
 
 @dataclass(frozen=True)
 class LayerSpec:
-    """A single compartment/layer subproblem instance.
+    """A single compartment subproblem instance.
 
     The geometric effect of shape/deck position is passed via shape_params,
     and consumed only by BS evaluator.
@@ -33,16 +33,19 @@ class LayerSpec:
     max_quantity_by_type: Dict[int, int] = field(default_factory=dict)
 
 
+CompartmentSpec = LayerSpec
+
+
 @dataclass(frozen=True)
 class LabelingOptions:
     use_dominance: bool = True
     use_cuts: bool = False
     use_rc_bound: bool = True
     use_residual_profile: bool = False
-    use_outer_inner_profile: bool = False
     use_height_order: bool = True
     use_local_residual_skyline: bool = True
     residual_profile_mode: str = "full"
+    profile_generator_mode: str = "hyb"
     compute_reachable_types: bool = False
     max_units_per_type: int = Config.max_units_per_compartment
     dominance_support_types: Tuple[int, ...] = ()
@@ -107,6 +110,9 @@ class LayerPattern:
     shape_params: Dict[str, object]
 
 
+CompartmentPattern = LayerPattern
+
+
 import sys
 from pathlib import Path
 
@@ -119,7 +125,6 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from src.model.BPC_layer.feasibility_check import (
     HierarchicalBSEvaluator,
-    build_layer_outer_inner_model,
     build_layer_resource_model,
 )
 
@@ -411,145 +416,38 @@ def _apply_consumption(
     return new_residual
 
 
-def _outer_inner_allocate(
-    residual: Tuple[float, ...],
-    choices,
-    quantity: int,
-    unit_length: float,
-    eps: float,
-) -> Optional[Tuple[float, ...]]:
-    if quantity == 0:
-        return residual
-    if not choices:
-        return None
-
-    current = list(residual)
-    for _ in range(quantity):
-        best_choice = None
-        best_score = None
-        for choice in choices:
-            if any(current[idx] < unit_length - eps for idx in choice.hits):
-                continue
-            after_hits = [current[idx] - unit_length for idx in choice.hits]
-            # Prefer outer blocks first, then the placement that leaves the
-            # largest bottleneck residual. Central is kept as the last resort.
-            is_side = 1 if choice.side != "central" else 0
-            score = (is_side, choice.block_idx, min(after_hits), sum(after_hits))
-            if best_score is None or score > best_score:
-                best_choice = choice
-                best_score = score
-
-        if best_choice is None:
-            return None
-        for idx in best_choice.hits:
-            current[idx] -= unit_length
-
-    return tuple(current)
+def _choice_weakly_dominates(a, b) -> bool:
+    return set(a.hits).issubset(set(b.hits))
 
 
-def generate_layer_patterns_outer_inner(
-    layer: LayerSpec,
-    duals: DualValues,
-    options: LabelingOptions = LabelingOptions(use_residual_profile=True, use_outer_inner_profile=True),
-    cut_evaluator: Optional[CutEvaluator] = None,
-    stats: Optional[LabelingStats] = None,
-) -> List[LayerPattern]:
-    """Experimental outside-in label generation.
-
-    Car types are processed from low to high. For each quantity q, a canonical
-    greedy placement fills the outermost feasible side resources first, so each
-    parent label creates at most one child per q.
-    """
-
-    if options.use_cuts:
-        raise ValueError("Outer-inner profile is disabled for use_cuts=True.")
-    if cut_evaluator is not None:
-        raise ValueError("Outer-inner profile generation does not support cut_evaluator.")
-
-    ordered_types = sorted(layer.car_types, key=lambda i: (float(layer.car_heights.get(i, 0.0)), i))
-    resource_model = build_layer_outer_inner_model(layer)
-
-    root_quantities = {i: 0 for i in ordered_types}
-    root_label = ResidualLabel(
-        stage=0,
-        reduced_cost=-duals.gamma / 2.0,
-        quantities=root_quantities,
-        total_length=0.0,
-        residual=resource_model.capacities,
-    )
-
-    current_labels: List[ResidualLabel] = [root_label]
-
-    for stage, car_type in enumerate(ordered_types, start=1):
-        next_labels: List[ResidualLabel] = []
-        choices = resource_model.choices_by_type.get(car_type, ())
-        max_q = min(options.max_units_per_type, int(layer.max_quantity_by_type.get(car_type, options.max_units_per_type)))
-        unit_resource = layer.car_lengths[car_type] + resource_model.delta
-        unit_length = layer.car_lengths[car_type]
-        coef = unit_length + duals.alpha.get(car_type, 0.0) + duals.beta.get(car_type, 0.0) + duals.branch_q.get(car_type, 0.0)
-        remaining = ordered_types[stage:]
-
-        for lb in current_labels:
-            for q in range(0, max_q + 1):
-                q_new = dict(lb.quantities)
-                q_new[car_type] = q
-
-                rc = lb.reduced_cost - coef * q
-                if q > 0:
-                    rc -= duals.branch_a.get(car_type, 0.0)
-
-                if options.use_rc_bound:
-                    rc_lb = _future_reduced_cost_lower_bound(rc, remaining, layer, duals, options)
-                    if rc_lb >= -options.eps:
-                        if stats is not None:
-                            stats.labels_pruned_by_bound += 1
-                        continue
-
-                residual = _outer_inner_allocate(lb.residual, choices, q, unit_resource, options.eps)
-                if residual is None:
-                    continue
-
-                if stats is not None:
-                    stats.labels_feasible += 1
-                next_labels.append(
-                    ResidualLabel(
-                        stage=stage,
-                        reduced_cost=rc,
-                        quantities=q_new,
-                        total_length=lb.total_length + unit_length * q,
-                        residual=residual,
-                    )
-                )
-
-        if options.use_dominance:
-            next_labels = _apply_residual_dominance(
-                next_labels,
-                options.eps,
-                support_types=options.dominance_support_types,
-                stats=stats,
-            )
-
-        current_labels = next_labels
-        if not current_labels:
-            break
-
-    patterns: List[LayerPattern] = []
-    for lb in current_labels:
-        if lb.stage != len(ordered_types):
+def _prune_dominated_choices(choices) -> Tuple:
+    kept = []
+    for choice in choices:
+        if any(other != choice and _choice_weakly_dominates(other, choice) for other in choices):
             continue
-        if lb.total_length > layer.layer_length_limit + options.eps:
-            continue
-        patterns.append(
-            LayerPattern(
-                layer_id=layer.layer_id,
-                quantities=dict(lb.quantities),
-                reduced_cost=lb.reduced_cost,
-                best_length=lb.total_length,
-                shape_params=dict(layer.shape_params),
-            )
-        )
+        kept.append(choice)
+    return tuple(kept)
 
-    return patterns
+
+def _choices_cover_all(original, reduced) -> bool:
+    return all(any(_choice_weakly_dominates(choice, old) for choice in reduced) for old in original)
+
+
+def _choices_for_profile_generator(resource_model, mode: str) -> Dict[int, Tuple]:
+    normalized = mode.lower().strip()
+    if normalized in {"exact", "ex", "e"}:
+        return dict(resource_model.choices_by_type)
+    if normalized not in {"gr", "hyb", "hybrid"}:
+        raise ValueError(f"Unknown profile_generator_mode: {mode}")
+
+    selected: Dict[int, Tuple] = {}
+    for car_type, choices in resource_model.choices_by_type.items():
+        reduced = _prune_dominated_choices(choices)
+        if reduced and _choices_cover_all(choices, reduced):
+            selected[car_type] = reduced
+        else:
+            selected[car_type] = choices
+    return selected
 
 
 def generate_layer_patterns_residual(
@@ -567,22 +465,23 @@ def generate_layer_patterns_residual(
     than a DFS feasibility search.
     """
 
-    if options.use_cuts:
-        raise ValueError("Residual-profile dominance is disabled for use_cuts=True.")
-    if cut_evaluator is not None:
-        raise ValueError("Residual-profile generation does not support cut_evaluator.")
-
+    if options.use_cuts and cut_evaluator is None:
+        raise ValueError("use_cuts=True requires a cut_evaluator.")
     if options.use_height_order:
         ordered_types = sorted(layer.car_types, key=lambda i: (-float(layer.car_heights.get(i, 0.0)), i))
     else:
         ordered_types = list(layer.car_types)
     resource_model = build_layer_resource_model(layer, interval_profile=options.residual_profile_mode)
+    choices_by_type = _choices_for_profile_generator(resource_model, options.profile_generator_mode)
     resource_count = len(resource_model.capacities)
 
     root_quantities = {i: 0 for i in ordered_types}
+    root_rc = -duals.gamma / 2.0
+    if options.use_cuts and cut_evaluator is not None:
+        root_rc += cut_evaluator.reduced_cost_shift(layer, root_quantities, duals)
     root_label = ResidualLabel(
         stage=0,
-        reduced_cost=-duals.gamma / 2.0,
+        reduced_cost=root_rc,
         quantities=root_quantities,
         total_length=0.0,
         residual=resource_model.capacities,
@@ -592,7 +491,7 @@ def generate_layer_patterns_residual(
 
     for stage, car_type in enumerate(ordered_types, start=1):
         next_labels: List[ResidualLabel] = []
-        choices = resource_model.choices_by_type.get(car_type, ())
+        choices = choices_by_type.get(car_type, ())
         max_q = min(options.max_units_per_type, int(layer.max_quantity_by_type.get(car_type, options.max_units_per_type)))
         unit_resource = layer.car_lengths[car_type] + resource_model.delta
         unit_length = layer.car_lengths[car_type]
@@ -607,8 +506,12 @@ def generate_layer_patterns_residual(
                 rc = lb.reduced_cost - coef * q
                 if q > 0:
                     rc -= duals.branch_a.get(car_type, 0.0)
+                if options.use_cuts and cut_evaluator is not None:
+                    rc += cut_evaluator.reduced_cost_shift(layer, q_new, duals) - cut_evaluator.reduced_cost_shift(
+                        layer, lb.quantities, duals
+                    )
 
-                if options.use_rc_bound:
+                if options.use_rc_bound and not options.use_cuts:
                     rc_lb = _future_reduced_cost_lower_bound(rc, remaining, layer, duals, options)
                     if rc_lb >= -options.eps:
                         if stats is not None:
@@ -696,9 +599,12 @@ def generate_layer_patterns(
     ordered_types = list(layer.car_types)
 
     root_quantities = {i: 0 for i in ordered_types}
+    root_rc = -duals.gamma / 2.0
+    if options.use_cuts and cut_evaluator is not None:
+        root_rc += cut_evaluator.reduced_cost_shift(layer, root_quantities, duals)
     root_label = Label(
         stage=0,
-        reduced_cost=-duals.gamma / 2.0,
+        reduced_cost=root_rc,
         quantities=root_quantities,
         best_length=0.0,
         reachable_types=set(ordered_types),

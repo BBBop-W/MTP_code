@@ -161,6 +161,14 @@ class MasterProblem:
             name="wagon_limit",
         )
 
+        branch_a_constr = {}
+        for i, (lb, ub) in branch_a_bounds.items():
+            expr = gp.quicksum((1 if col.q.get(i, 0) > 0 else 0) * theta[cid] for cid, col in self.columns.items())
+            if lb is not None:
+                branch_a_constr[(i, 'lb')] = model.addConstr(expr >= lb, name=f"branch_a_lb_{i}")
+            if ub is not None:
+                branch_a_constr[(i, 'ub')] = model.addConstr(expr <= ub, name=f"branch_a_ub_{i}")
+
         branch_q_constr = {}
         for i, (lb, ub) in branch_q_bounds.items():
             expr = gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items())
@@ -169,24 +177,24 @@ class MasterProblem:
             if ub is not None:
                 branch_q_constr[(i, 'ub')] = model.addConstr(expr <= ub, name=f"branch_q_ub_{i}")
 
+        capacity_constr = None
+        if use_capacity_cut:
+            min_wagons = math.ceil(sum(self.D[i] for i in self.I) / (2 * wagon_capacity))
+            capacity_constr = model.addConstr(
+                gp.quicksum(theta[cid] for cid, col in self.columns.items() if col.compartment == "upper") >= min_wagons,
+                name="wagon_capacity_cut",
+            )
+
         sr_cuts_constr = {}
-        for cut_key in active_sr_cuts:
-            comp, subset = cut_key
-            # calculate coefficient for each column
+        for subset in active_sr_cuts:
             expr = gp.LinExpr()
             for cid, col in self.columns.items():
-                if col.compartment != comp:
-                    continue
-                val = 0
-                for i in subset:
-                    if col.q.get(i, 0) > 0:
-                        val += col.q[i]
+                val = sum(1 for i in subset if col.q.get(i, 0) > self.U[i] / 2.0)
                 coeff = math.floor(0.5 * val)
                 if coeff > 0:
                     expr += coeff * theta[cid]
-            
-            # Subsets of 3 items can at most be picked 1 time collectively without exceeding limit if capacity rules apply
-            sr_cuts_constr[cut_key] = model.addConstr(expr <= 0.5, name=f"sr_cut_{comp}_{subset}")
+
+            sr_cuts_constr[subset] = model.addConstr(expr <= 1, name=f"sr_cut_{subset}")
 
         model.ModelSense = gp.GRB.MINIMIZE
         model.optimize()
@@ -209,11 +217,16 @@ class MasterProblem:
         dual_gamma = {p: float(wagon_map_constr[p].Pi) for p in modes}
         dual_kappa = float(num_wagons_constr.Pi)
 
+        dual_branch_a = {i: 0.0 for i in self.I}
+        for (i, bound_type), constr in branch_a_constr.items():
+            dual_branch_a[i] += float(constr.Pi)
+
         dual_branch_q = {i: 0.0 for i in self.I}
         for (i, bound_type), constr in branch_q_constr.items():
             dual_branch_q[i] += float(constr.Pi)
 
-        dual_sigma = {cut_key: float(constr.Pi) for cut_key, constr in sr_cuts_constr.items()}
+        dual_eta = float(capacity_constr.Pi) if capacity_constr is not None else 0.0
+        dual_sigma = {subset: float(constr.Pi) for subset, constr in sr_cuts_constr.items()}
 
         return MasterLPSolution(
             status=model.Status,
@@ -223,14 +236,31 @@ class MasterProblem:
             dual_beta=dual_beta,
             dual_gamma=dual_gamma,
             dual_kappa=dual_kappa,
-            dual_branch_a={}, 
+            dual_branch_a=dual_branch_a,
             dual_branch_q=dual_branch_q,
-            dual_eta=0.0,
+            dual_eta=dual_eta,
             dual_sigma=dual_sigma,
             unmet_values=unmet_values,
         )
 
+    def separate_3sr_cuts(self, solution: MasterLPSolution, eps: float = 1e-4) -> List[Tuple[int, int, int]]:
+        violated: List[Tuple[int, int, int]] = []
+        for subset in combinations(self.I, 3):
+            lhs = 0.0
+            for col_id, theta_val in solution.theta_values.items():
+                if theta_val <= eps:
+                    continue
+                col = self.columns[col_id]
+                val = sum(1 for i in subset if col.q.get(i, 0) > self.U[i] / 2.0)
+                coeff = math.floor(0.5 * val)
+                if coeff > 0:
+                    lhs += coeff * theta_val
+            if lhs > 1 + eps:
+                violated.append(subset)
+        return violated
+
     def choose_branch_var(self, solution: MasterLPSolution, eps: float = 1e-5) -> tuple[str, int, float] | None:
+        a_sums = {i: 0.0 for i in self.I}
         q_sums = {i: 0.0 for i in self.I}
         for col_id, theta_val in solution.theta_values.items():
             if theta_val <= eps:
@@ -239,7 +269,12 @@ class MasterProblem:
             for i in self.I:
                 q_ir = col.q.get(i, 0)
                 if q_ir > 0:
+                    a_sums[i] += theta_val
                     q_sums[i] += q_ir * theta_val
+
+        for i in self.I:
+            if abs(a_sums[i] - round(a_sums[i])) > eps:
+                return 'a', i, a_sums[i]
 
         for i in self.I:
             if abs(q_sums[i] - round(q_sums[i])) > eps:
@@ -259,17 +294,19 @@ class MasterProblem:
             return not self.has_unmet_demand(solution, eps)
         if self.has_unmet_demand(solution, eps):
             return False
-        return self.choose_branch_var(solution, eps) is None and not self.fractional_theta_values(solution, eps)
+        return self.choose_branch_var(solution, eps) is None
 
     def has_unmet_demand(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         return any(value > eps for value in solution.unmet_values.values())
 
     def solve_restricted_ip(
         self,
+        branch_a_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
         branch_q_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
         time_limit: float | None = None,
         log_to_console: bool = False,
     ) -> MasterIPSolution:
+        branch_a_bounds = branch_a_bounds or {}
         branch_q_bounds = branch_q_bounds or {}
         model = gp.Model("mlp_ic_master_layer_ip")
         model.Params.OutputFlag = 1 if log_to_console else 0
@@ -307,6 +344,13 @@ class MasterProblem:
             name="wagon_limit",
         )
 
+        for i, (lb, ub) in branch_a_bounds.items():
+            expr = gp.quicksum((1 if col.q.get(i, 0) > 0 else 0) * theta[cid] for cid, col in self.columns.items())
+            if lb is not None:
+                model.addConstr(expr >= lb, name=f"branch_a_lb_{i}")
+            if ub is not None:
+                model.addConstr(expr <= ub, name=f"branch_a_ub_{i}")
+
         for i, (lb, ub) in branch_q_bounds.items():
             expr = gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items())
             if lb is not None:
@@ -335,6 +379,7 @@ class ColumnGenerationEngine:
         self.log_to_console = log_to_console
         self.generated_columns = 0
         self.stats = CGStats()
+        self.active_sr_cuts: Set[Tuple[int, int, int]] = set()
 
     def _log_cg(self, msg: str):
         if self.log_to_console:
@@ -351,6 +396,9 @@ class ColumnGenerationEngine:
         last_solution = self.master.solve_lp(
             branch_a_bounds=branch_a_bounds,
             branch_q_bounds=branch_q_bounds,
+            active_sr_cuts=self.active_sr_cuts,
+            use_capacity_cut=getattr(self.pricing_engine.options, "use_cuts", False),
+            wagon_capacity=getattr(self.pricing_engine, "wagon_capacity_cut", None) or Config.max_units_per_compartment,
             time_limit=Config.timelimit,
             log_to_console=False,
         )
@@ -390,6 +438,27 @@ class ColumnGenerationEngine:
             self.pricing_engine.stats.reachability_probes = 0
 
             if not new_columns:
+                if getattr(self.pricing_engine.options, "use_cuts", False):
+                    violated_cuts = self.master.separate_3sr_cuts(last_solution)
+                    new_cuts_added = False
+                    for cut in violated_cuts:
+                        if cut not in self.active_sr_cuts:
+                            self.active_sr_cuts.add(cut)
+                            new_cuts_added = True
+                    if new_cuts_added:
+                        self._log(f"Iter={it}: separated {len(violated_cuts)} compartment 3-SR cuts. Resume CG.")
+                        t0 = time.time()
+                        last_solution = self.master.solve_lp(
+                            branch_a_bounds=branch_a_bounds,
+                            branch_q_bounds=branch_q_bounds,
+                            active_sr_cuts=self.active_sr_cuts,
+                            use_capacity_cut=True,
+                            wagon_capacity=getattr(self.pricing_engine, "wagon_capacity_cut", None) or Config.max_units_per_compartment,
+                            time_limit=Config.timelimit,
+                            log_to_console=False,
+                        )
+                        self.stats.master_time += (time.time() - t0)
+                        continue
                 self._log_cg(f"Iter={it}: no new column found (reduced cost >= 0). Stop CG.")
                 break
 
@@ -407,6 +476,9 @@ class ColumnGenerationEngine:
             last_solution = self.master.solve_lp(
                 branch_a_bounds=branch_a_bounds,
                 branch_q_bounds=branch_q_bounds,
+                active_sr_cuts=self.active_sr_cuts,
+                use_capacity_cut=getattr(self.pricing_engine.options, "use_cuts", False),
+                wagon_capacity=getattr(self.pricing_engine, "wagon_capacity_cut", None) or Config.max_units_per_compartment,
                 time_limit=Config.timelimit,
                 log_to_console=False,
             )

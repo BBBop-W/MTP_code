@@ -16,8 +16,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 import src.model.BPC_layer.feasibility_check as layer_feasibility
 import src.model.BPC_wagon.feasibility_check as wagon_feasibility
-from src.model.BPC_layer.BBtree import BBTree as LayerBBTree
+from src.model.BPC_compartment.BBtree import BBTree as CompartmentBBTree
 from src.model.BPC_wagon.BBtree import BBTree as WagonBBTree
+from src.model.gurobi import build_and_solve
 from src.utility.config import config as Config
 
 
@@ -38,6 +39,10 @@ def run_method(
     num_splits: int,
     independent_mode_split: bool,
     mip_gap_tol: float,
+    wagon_pricing_columns: int,
+    compartment_columns_per_subproblem: int,
+    use_cuts: bool,
+    profile_generator_mode: str,
 ) -> Dict[str, object]:
     _set_segmentation(num_splits, independent_mode_split)
     t0 = time.perf_counter()
@@ -49,26 +54,30 @@ def run_method(
             max_cg_iters=max_cg_iters,
             log_to_console=False,
             use_dominance=True,
-            use_cuts=False,
+            use_cuts=use_cuts,
             pricing_method=pricing_method,
             num_splits=num_splits,
             independent_mode_split=independent_mode_split,
+            max_columns_per_pricing=wagon_pricing_columns,
+            profile_generator_mode=profile_generator_mode,
             print_bb_progress=False,
             print_subproblem_progress=False,
         )
-    elif family == "layer":
-        tree = LayerBBTree(
+    elif family in {"layer", "compartment"}:
+        tree = CompartmentBBTree(
             instance_dir=instance_dir,
-            output_root=output_root / f"layer_{pricing_method}",
+            output_root=output_root / f"compartment_{pricing_method}",
             max_nodes=max_nodes,
             max_cg_iters=max_cg_iters,
             log_to_console=False,
             use_dominance=True,
-            use_cuts=False,
+            use_cuts=use_cuts,
             pricing_method=pricing_method,
             use_residual_profile=True,
             residual_profile_mode="full",
+            profile_generator_mode=profile_generator_mode,
             compute_reachable_types=False,
+            max_columns_per_subproblem=compartment_columns_per_subproblem,
             mip_gap_tol=mip_gap_tol,
             print_bb_progress=False,
             print_subproblem_progress=False,
@@ -80,15 +89,17 @@ def run_method(
     elapsed = time.perf_counter() - t0
     objective = result.best_objective
     return {
-        "method": f"{family}_{pricing_method}",
-        "family": family,
+        "method": f"{'compartment' if family == 'layer' else family}_{pricing_method}",
+        "family": "compartment" if family == "layer" else family,
         "pricing_method": pricing_method,
+        "use_cuts": use_cuts,
         "objective": objective,
         "loaded_length": -objective if objective is not None else None,
         "best_bound": result.best_bound,
         "bpc_gap": result.gap,
         "explored_nodes": result.explored_nodes,
         "generated_columns": result.generated_columns,
+        "active_sr_cuts": len(getattr(tree.cg_engine, "active_sr_cuts", set())),
         "total_time": elapsed,
         "master_time": tree.cg_engine.stats.master_time,
         "pricing_time": tree.cg_engine.stats.pricing_time,
@@ -97,6 +108,55 @@ def run_method(
         "merge_time": tree.cg_engine.stats.merge_time,
         "subproblem_solver_time": tree.cg_engine.stats.solver_time,
         "subproblem_solver_nodes": tree.cg_engine.stats.solver_nodes,
+        "gurobi_status": None,
+    }
+
+
+def run_gurobi_method(
+    instance_dir: Path,
+    output_root: Path,
+    num_splits: int,
+    independent_mode_split: bool,
+    time_limit: float | None,
+    mip_gap: float | None,
+) -> Dict[str, object]:
+    t0 = time.perf_counter()
+    summary = build_and_solve(
+        instance_dir=instance_dir,
+        output_dir=output_root / "compact_gurobi" / instance_dir.name,
+        log_to_console=False,
+        num_splits=num_splits,
+        independent_mode_split=independent_mode_split,
+        objective_type="length",
+        time_limit=time_limit,
+        mip_gap=mip_gap,
+    )
+    elapsed = time.perf_counter() - t0
+    loaded_length = summary.get("loaded_length_mm")
+    objective = -float(loaded_length) if loaded_length is not None else None
+    obj_bound = summary.get("obj_bound")
+    best_bound = -float(obj_bound) if obj_bound is not None else None
+    return {
+        "method": "compact_gurobi",
+        "family": "compact",
+        "pricing_method": "solver",
+        "use_cuts": False,
+        "objective": objective,
+        "loaded_length": loaded_length,
+        "best_bound": best_bound,
+        "bpc_gap": summary.get("mip_gap"),
+        "explored_nodes": summary.get("node_count"),
+        "generated_columns": None,
+        "active_sr_cuts": None,
+        "total_time": elapsed,
+        "master_time": None,
+        "pricing_time": None,
+        "labeling_time": None,
+        "bs_time": None,
+        "merge_time": None,
+        "subproblem_solver_time": summary.get("runtime_sec"),
+        "subproblem_solver_nodes": summary.get("node_count"),
+        "gurobi_status": summary.get("status"),
     }
 
 
@@ -110,6 +170,19 @@ def main() -> None:
     parser.add_argument("--max-cg-iters", type=int, default=3000)
     parser.add_argument("--mip-gap-tol", type=float, default=1e-8)
     parser.add_argument("--gurobi-threads", type=int, default=None)
+    parser.add_argument("--wagon-pricing-columns", type=int, default=Config.max_wagon_pricing_columns)
+    parser.add_argument(
+        "--compartment-columns-per-subproblem",
+        "--layer-columns-per-subproblem",
+        dest="compartment_columns_per_subproblem",
+        type=int,
+        default=Config.max_layer_pricing_columns_per_subproblem,
+    )
+    parser.add_argument("--use-cuts", action="store_true")
+    parser.add_argument("--profile-generator-mode", choices=["ex", "gr", "hyb"], default="hyb")
+    parser.add_argument("--include-gurobi", action="store_true")
+    parser.add_argument("--gurobi-time-limit", type=float, default=300.0)
+    parser.add_argument("--gurobi-mip-gap", type=float, default=Config.gap)
     parser.add_argument("--output-root", type=Path, default=Path("/private/tmp/mtp_bpc_pricing_compare"))
     parser.add_argument("--csv", type=Path, default=None)
     args = parser.parse_args()
@@ -122,8 +195,8 @@ def main() -> None:
         for family, method in [
             ("wagon", "merging"),
             ("wagon", "solver"),
-            ("layer", "labeling"),
-            ("layer", "solver"),
+            ("compartment", "labeling"),
+            ("compartment", "solver"),
         ]:
             row = run_method(
                 family=family,
@@ -135,8 +208,23 @@ def main() -> None:
                 num_splits=args.num_splits,
                 independent_mode_split=args.independent_mode_split,
                 mip_gap_tol=args.mip_gap_tol,
+                wagon_pricing_columns=args.wagon_pricing_columns,
+                compartment_columns_per_subproblem=args.compartment_columns_per_subproblem,
+                use_cuts=args.use_cuts,
+                profile_generator_mode=args.profile_generator_mode,
             )
             rows.append(row)
+        if args.include_gurobi:
+            rows.append(
+                run_gurobi_method(
+                    instance_dir=instance_dir,
+                    output_root=args.output_root,
+                    num_splits=args.num_splits,
+                    independent_mode_split=args.independent_mode_split,
+                    time_limit=args.gurobi_time_limit,
+                    mip_gap=args.gurobi_mip_gap,
+                )
+            )
     finally:
         Config.gurobi_threads = old_threads
 
@@ -156,16 +244,23 @@ def main() -> None:
         )
 
     print(
-        "method,objective,loaded_length,best_bound,bpc_gap,generated_columns,"
+        "method,use_cuts,objective,loaded_length,best_bound,bpc_gap,generated_columns,active_sr_cuts,"
         "total_time,master_time,pricing_time,labeling_time,bs_time,merge_time,"
         "subproblem_solver_time,subproblem_solver_nodes,abs_gap_to_best,rel_gap_to_best,aligned_with_best"
     )
     for row in rows:
+        def fmt(value, digits=3):
+            if value is None:
+                return ""
+            if isinstance(value, float):
+                return f"{value:.{digits}f}"
+            return str(value)
+
         print(
-            f"{row['method']},{row['objective']},{row['loaded_length']},{row['best_bound']},{row['bpc_gap']},"
-            f"{row['generated_columns']},{row['total_time']:.3f},{row['master_time']:.3f},"
-            f"{row['pricing_time']:.3f},{row['labeling_time']:.3f},{row['bs_time']:.3f},"
-            f"{row['merge_time']:.3f},{row['subproblem_solver_time']:.3f},{row['subproblem_solver_nodes']:.0f},"
+            f"{row['method']},{row.get('use_cuts')},{row['objective']},{row['loaded_length']},{row['best_bound']},{row['bpc_gap']},"
+            f"{row['generated_columns']},{row.get('active_sr_cuts')},{fmt(row['total_time'])},{fmt(row['master_time'])},"
+            f"{fmt(row['pricing_time'])},{fmt(row['labeling_time'])},{fmt(row['bs_time'])},"
+            f"{fmt(row['merge_time'])},{fmt(row['subproblem_solver_time'])},{fmt(row['subproblem_solver_nodes'], 0)},"
             f"{row['abs_gap_to_best']},{row['rel_gap_to_best']},{row['aligned_with_best']}"
         )
 

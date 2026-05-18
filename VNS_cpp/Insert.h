@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <limits>
 #include "Problem.h"
 #include "Carriage.h"
 #include "Feasibility.h"
@@ -45,18 +46,12 @@ struct BestRouteResult {
 };
 
 BestRouteResult BestToRoute(Carriage& c, Vehicle* v, Problem* p) {
-    double max_obj = 0;
+    double max_obj = -std::numeric_limits<double>::infinity();
     int best_place = -1;
     int best_floor = -1;
     
-    if (c.length(0) == 0) {
-        return {max_obj, 0, 0};
-    }
-    if (c.length(1) == 0) {
-        return {max_obj, 1, 0};
-    }
     for (int f : {0, 1}) {
-        for (size_t i = 0; i < c.route[f].size(); ++i) {
+        for (size_t i = 0; i <= c.route[f].size(); ++i) {
             double obj_temp = c.obj;
             if (InsertCustomer(c, v, i, p, false, f)) {
                 double obj = c.obj - obj_temp;

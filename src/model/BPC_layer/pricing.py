@@ -14,7 +14,6 @@ from src.model.BPC_layer.CG import MasterProblem, MasterLPSolution, PatternColum
 from src.model.BPC_layer.labeling import (
     LayerSpec,
     generate_layer_patterns,
-    generate_layer_patterns_outer_inner,
     generate_layer_patterns_residual,
     DualValues,
     LabelingOptions,
@@ -40,12 +39,13 @@ class PricingOptions:
     use_cuts: bool = False
     use_rc_bound: bool = True
     use_residual_profile: bool = True
-    use_outer_inner_profile: bool = False
     use_height_order: bool = True
     use_local_residual_skyline: bool = True
     residual_profile_mode: str = "full"
+    profile_generator_mode: str = "hyb"
     compute_reachable_types: bool = False
     max_units_per_type: int = 10
+    max_columns_per_subproblem: int = Config.max_layer_pricing_columns_per_subproblem
 
 class EarlyStopPricingEngine:
     def __init__(
@@ -54,12 +54,13 @@ class EarlyStopPricingEngine:
         use_cuts: bool = False,
         use_rc_bound: bool = True,
         use_residual_profile: bool = True,
-        use_outer_inner_profile: bool = False,
         use_height_order: bool = True,
         use_local_residual_skyline: bool = True,
         residual_profile_mode: str = "full",
+        profile_generator_mode: str = "hyb",
         compute_reachable_types: bool = False,
         max_units_per_type: int = 10,
+        max_columns_per_subproblem: int = Config.max_layer_pricing_columns_per_subproblem,
         verbose: bool = False,
     ):
         self.options = PricingOptions(
@@ -67,16 +68,17 @@ class EarlyStopPricingEngine:
             use_cuts=use_cuts,
             use_rc_bound=use_rc_bound,
             use_residual_profile=use_residual_profile,
-            use_outer_inner_profile=use_outer_inner_profile,
             use_height_order=use_height_order,
             use_local_residual_skyline=use_local_residual_skyline,
             residual_profile_mode=residual_profile_mode,
+            profile_generator_mode=profile_generator_mode,
             compute_reachable_types=compute_reachable_types,
             max_units_per_type=max_units_per_type,
+            max_columns_per_subproblem=max_columns_per_subproblem,
         )
         self.verbose = verbose
         self.evaluator = HierarchicalBSEvaluator(compute_reachable_types=compute_reachable_types)
-        self.wagon_capacity_cut: Optional[int] = None
+        self.wagon_capacity_cut: Optional[int] = Config.max_units_per_compartment
         self.stats = PricingStats()
         self._col_counter = 0
 
@@ -100,8 +102,8 @@ class EarlyStopPricingEngine:
         from src.model.BPC_layer.cuts import SimpleCutEvaluator, CutState
         cut_evaluator = None
         if self.options.use_cuts:
-            cut_state = CutState(sigma_by_subset=solution.dual_sigma)
-            max_totals = {i: 6 for i in master.I}
+            cut_state = CutState(eta_sum=solution.dual_eta, sigma_by_subset=solution.dual_sigma)
+            max_totals = master.U
             cut_evaluator = SimpleCutEvaluator(max_total_by_type=max_totals, cut_state=cut_state)
 
         for p in modes:
@@ -127,7 +129,7 @@ class EarlyStopPricingEngine:
                 alpha=solution.dual_alpha,
                 beta=solution.dual_beta,
                 gamma=2.0 * (gamma_p + kappa), 
-                branch_a={},
+                branch_a=solution.dual_branch_a,
                 branch_q=solution.dual_branch_q,
             )
 
@@ -138,25 +140,19 @@ class EarlyStopPricingEngine:
                 use_cuts=self.options.use_cuts,
                 use_rc_bound=self.options.use_rc_bound,
                 use_residual_profile=self.options.use_residual_profile,
-                use_outer_inner_profile=self.options.use_outer_inner_profile,
                 use_height_order=self.options.use_height_order,
                 use_local_residual_skyline=self.options.use_local_residual_skyline,
                 residual_profile_mode=self.options.residual_profile_mode,
+                profile_generator_mode=self.options.profile_generator_mode,
                 compute_reachable_types=self.options.compute_reachable_types,
                 max_units_per_type=self.options.max_units_per_type,
             )
-            if self.options.use_outer_inner_profile and not self.options.use_cuts:
-                patterns_u = generate_layer_patterns_outer_inner(
-                    layer=spec_u,
-                    duals=duals_u,
-                    options=label_options,
-                    stats=lab_stats,
-                )
-            elif self.options.use_residual_profile and not self.options.use_cuts:
+            if self.options.use_residual_profile:
                 patterns_u = generate_layer_patterns_residual(
                     layer=spec_u,
                     duals=duals_u,
                     options=label_options,
+                    cut_evaluator=cut_evaluator,
                     stats=lab_stats,
                 )
             else:
@@ -171,7 +167,7 @@ class EarlyStopPricingEngine:
             self.stats.labeling_time += (time.time() - t_start)
             self._accumulate_labeling_stats(lab_stats)
 
-            for pat in patterns_u:
+            for pat in self._negative_top_k(patterns_u):
                 if pat.reduced_cost < -1e-5:
                     self._col_counter += 1
                     col = PatternColumn(
@@ -208,7 +204,7 @@ class EarlyStopPricingEngine:
                 alpha=solution.dual_alpha,
                 beta=solution.dual_beta,
                 gamma=-2.0 * gamma_p,
-                branch_a={},
+                branch_a=solution.dual_branch_a,
                 branch_q=solution.dual_branch_q,
             )
             
@@ -218,25 +214,19 @@ class EarlyStopPricingEngine:
                 use_cuts=self.options.use_cuts,
                 use_rc_bound=self.options.use_rc_bound,
                 use_residual_profile=self.options.use_residual_profile,
-                use_outer_inner_profile=self.options.use_outer_inner_profile,
                 use_height_order=self.options.use_height_order,
                 use_local_residual_skyline=self.options.use_local_residual_skyline,
                 residual_profile_mode=self.options.residual_profile_mode,
+                profile_generator_mode=self.options.profile_generator_mode,
                 compute_reachable_types=self.options.compute_reachable_types,
                 max_units_per_type=self.options.max_units_per_type,
             )
-            if self.options.use_outer_inner_profile and not self.options.use_cuts:
-                patterns_l = generate_layer_patterns_outer_inner(
-                    layer=spec_l,
-                    duals=duals_l,
-                    options=label_options,
-                    stats=lab_stats,
-                )
-            elif self.options.use_residual_profile and not self.options.use_cuts:
+            if self.options.use_residual_profile:
                 patterns_l = generate_layer_patterns_residual(
                     layer=spec_l,
                     duals=duals_l,
                     options=label_options,
+                    cut_evaluator=cut_evaluator,
                     stats=lab_stats,
                 )
             else:
@@ -251,7 +241,7 @@ class EarlyStopPricingEngine:
             self.stats.labeling_time += (time.time() - t_start)
             self._accumulate_labeling_stats(lab_stats)
 
-            for pat in patterns_l:
+            for pat in self._negative_top_k(patterns_l):
                 if pat.reduced_cost < -1e-5:
                     self._col_counter += 1
                     col = PatternColumn(
@@ -268,6 +258,12 @@ class EarlyStopPricingEngine:
         self.stats.reachability_probes += self.evaluator.reachability_probes
         new_columns.sort(key=lambda c: c.metadata["rc"]) 
         return new_columns
+
+    def _negative_top_k(self, patterns):
+        return sorted(
+            (pat for pat in patterns if pat.reduced_cost < -1e-5),
+            key=lambda pat: pat.reduced_cost,
+        )[: self.options.max_columns_per_subproblem]
 
     def _accumulate_labeling_stats(self, lab_stats: LabelingStats) -> None:
         self.stats.labels_feasible += lab_stats.labels_feasible

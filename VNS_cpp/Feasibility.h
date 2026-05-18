@@ -215,14 +215,8 @@ inline bool IsFeasible_Floor(const std::vector<int>& route, Problem* p, int mode
     std::vector<std::vector<std::vector<int>>> car_choices; // For each car, a list of choices, where each choice is a list of hit interval indices
     std::vector<double> caps;
     
-    // Filter intervals based on pi relaxation for upper deck
     std::vector<DynamicInterval> active_intervals;
     for (const auto& inter : intervals) {
-        if (is_upper) {
-            bool enforce_left = (inter.l_idx == N_blocks) || pi_left;
-            bool enforce_right = (inter.r_idx == N_blocks) || pi_right;
-            if (!(enforce_left && enforce_right)) continue;
-        }
         active_intervals.push_back(inter);
         caps.push_back(inter.cap);
     }

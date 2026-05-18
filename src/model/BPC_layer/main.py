@@ -12,81 +12,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from src.model.BPC_layer.BBtree import BBTree
-from src.model.BPC_layer.CG import PatternColumn
-from src.model.BPC_layer.feasibility_check import HierarchicalBSEvaluator
-from src.model.BPC_layer.labeling import LayerSpec
-from src.utility.config import config as Config
-
-def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
-    if not json_path.exists():
-        print(f"[Warn] JSON file not found: {json_path}")
-        return
-
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    car_type_map = {}
-    for i in master.I:
-        row = master.car_info.iloc[i - 1]
-        brand = row["program"]
-        model = row["model"]
-        car_type_map[(str(brand).strip(), str(model).strip())] = i
-        car_type_map[f"{str(brand).strip()} {str(model).strip()}"] = i
-        car_type_map[str(model).strip()] = i 
-        
-    evaluator = HierarchicalBSEvaluator(compute_reachable_types=False)
-    added_count = 0
-    skipped_infeasible = 0
-    for idx, c in enumerate(data.get("carriage", [])):
-        deck_mode = c.get("position", "h-h")
-        
-        for comp, car_list in [("upper", c.get("top", [])), ("lower", c.get("bottom", []))]:
-            q_dict = {}
-            for m in car_list:
-                m_clean = m.strip()
-                car_id = car_type_map.get(m_clean)
-                if car_id is None:
-                    # Try to find by matching model substring
-                    for k, v in car_type_map.items():
-                        if isinstance(k, tuple) and k[1] == m_clean:
-                            car_id = v
-                            break
-                if car_id is not None:
-                    q_dict[car_id] = q_dict.get(car_id, 0) + 1
-            
-            if q_dict:
-                layer = LayerSpec(
-                    layer_id=f"{comp}_{deck_mode}",
-                    car_types=master.I,
-                    car_lengths=master.length,
-                    layer_length_limit=Config.top_len if comp == "upper" else Config.bottom_len,
-                    car_heights={i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I},
-                    shape_params={"compartment": comp, "deck": deck_mode},
-                    max_quantity_by_type={
-                        i: min(Config.max_units_per_compartment, master.U[i])
-                        for i in master.I
-                    },
-                )
-                if not evaluator.evaluate(layer, q_dict).feasible:
-                    skipped_infeasible += 1
-                    continue
-                cost = -sum(master.length[i] * q for i, q in q_dict.items())
-                col_id = f"{prefix}_c{idx}_{comp}"
-                pattern = PatternColumn(
-                    column_id=col_id,
-                    q=q_dict,
-                    cost=cost,
-                    compartment=comp,
-                    deck_mode=deck_mode,
-                    metadata={"source": prefix}
-                )
-                master.add_column(pattern)
-                added_count += 1
-                
-    if skipped_infeasible:
-        print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix}); skipped {skipped_infeasible} infeasible warmstart columns")
-    else:
-        print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix})")
+from src.model.warmstart import load_compartment_warmstart_columns
 
 def run_bpc(
     instance_name: str,
@@ -95,10 +21,10 @@ def run_bpc(
     independent_mode_split: bool = True,
     use_rc_bound: bool = True,
     use_residual_profile: bool = True,
-    use_outer_inner_profile: bool = False,
     use_height_order: bool = True,
     use_local_residual_skyline: bool = True,
     residual_profile_mode: str = "full",
+    profile_generator_mode: str = "hyb",
     compute_reachable_types: bool = False,
     pricing_method: str = "labeling",
 ):
@@ -125,7 +51,7 @@ def run_bpc(
     else:
         print(f"--- 1. Skipping VNS Warmstart for {instance_name} ---")
         
-    print(f"--- 2. Initializing LayerMaster BPC for {instance_name} ---")
+    print(f"--- 2. Initializing CompartmentMaster BPC for {instance_name} ---")
     bbtree = BBTree(
         instance_dir=instance_dir,
         output_root=PROJECT_ROOT / "result",
@@ -137,10 +63,10 @@ def run_bpc(
         pricing_method=pricing_method,
         use_rc_bound=use_rc_bound,
         use_residual_profile=use_residual_profile,
-        use_outer_inner_profile=use_outer_inner_profile,
         use_height_order=use_height_order,
         use_local_residual_skyline=use_local_residual_skyline,
         residual_profile_mode=residual_profile_mode,
+        profile_generator_mode=profile_generator_mode,
         compute_reachable_types=compute_reachable_types,
         print_bb_progress=True,
         print_subproblem_progress=False
@@ -150,19 +76,20 @@ def run_bpc(
         print("--- 3. Injecting Warmstart Columns ---")
         bi_json = output_dir / "BI" / "carriage_info.json"
         vns_json = output_dir / "VNS" / "carriage_info.json"
+        load_compartment_warmstart_columns(
+            bbtree.master,
+            [(bi_json, "BI"), (vns_json, "VNS")],
+        )
         
-        load_vns_columns_layer_master(bbtree.master, bi_json, "BI")
-        load_vns_columns_layer_master(bbtree.master, vns_json, "VNS")
-        
-        print(f"Total layer columns in pool before BPC: {len(bbtree.master.columns)}")
+        print(f"Total compartment columns in pool before BPC: {len(bbtree.master.columns)}")
 
-    print(f"--- 4. Running LayerMaster Branch-Price-and-Cut ---")
+    print(f"--- 4. Running CompartmentMaster Branch-Price-and-Cut ---")
     t0 = time.time()
     result = bbtree.solve()
     total_time = time.time() - t0
 
     print("\n==============================================")
-    print("      LayerMaster BPC Execution Summary       ")
+    print("   CompartmentMaster BPC Execution Summary    ")
     print("==============================================")
     print(f"Instance           : {instance_name}")
     print(f"Pricing Method     : {pricing_method}")
@@ -185,10 +112,10 @@ def run_bpc(
     print(f"  ├─ Kept Labels   : {bbtree.cg_engine.stats.labels_after_dominance}")
     print(f"  ├─ Reach Probes  : {bbtree.cg_engine.stats.reachability_probes}")
     print(f"  ├─ Residual Prof.: {use_residual_profile}")
-    print(f"  ├─ Outer-Inner   : {use_outer_inner_profile}")
     print(f"  ├─ Height Order  : {use_height_order}")
     print(f"  ├─ Local Skyline : {use_local_residual_skyline}")
     print(f"  ├─ Profile Mode  : {residual_profile_mode}")
+    print(f"  ├─ Generator     : {profile_generator_mode}")
     print("==============================================\n")
 
 if __name__ == "__main__":

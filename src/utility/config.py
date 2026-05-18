@@ -6,6 +6,8 @@ class config:
     gap = 0.00005  # 0.005%
     timelimit = 900
     max_units_per_compartment = 10
+    max_wagon_pricing_columns = 20
+    max_layer_pricing_columns_per_subproblem = 20
     gurobi_threads = None
 
     @classmethod

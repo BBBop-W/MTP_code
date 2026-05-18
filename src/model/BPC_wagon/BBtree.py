@@ -92,6 +92,8 @@ class BBTree:
         pricing_method: str = "merging",
         num_splits: int = 1,
         independent_mode_split: bool = True,
+        max_columns_per_pricing: int = Config.max_wagon_pricing_columns,
+        profile_generator_mode: str = "hyb",
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
     ) -> None:
@@ -117,6 +119,8 @@ class BBTree:
                 use_cuts=use_cuts,
                 num_splits=num_splits,
                 independent_mode_split=independent_mode_split,
+                max_columns_per_pricing=max_columns_per_pricing,
+                profile_generator_mode=profile_generator_mode,
                 verbose=print_subproblem_progress,
             )
         elif self.pricing_method == "solver":
@@ -124,6 +128,8 @@ class BBTree:
                 num_splits=num_splits,
                 independent_mode_split=independent_mode_split,
                 max_units_per_compartment=Config.max_units_per_compartment,
+                max_columns_per_pricing=1,
+                use_cuts=use_cuts,
                 verbose=print_subproblem_progress,
             )
         else:

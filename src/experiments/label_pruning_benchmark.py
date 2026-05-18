@@ -375,7 +375,6 @@ def run_root_gr(instance_dir: Path, splits: int, use_dominance: bool, max_cg_ite
         use_cuts=False,
         use_rc_bound=True,
         use_residual_profile=True,
-        use_outer_inner_profile=False,
         use_height_order=True,
         use_local_residual_skyline=True,
         residual_profile_mode="full",

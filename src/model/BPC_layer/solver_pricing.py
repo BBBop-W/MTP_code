@@ -26,17 +26,25 @@ class SolverPricingStats:
     solver_nodes: float = 0.0
 
 
+@dataclass(frozen=True)
+class SolverPricingOptions:
+    use_cuts: bool = False
+
+
 class SolverPricingEngine:
-    """Solve every fixed deck/layer pricing subproblem with Gurobi."""
+    """Solve every fixed deck/compartment pricing subproblem with Gurobi."""
 
     def __init__(
         self,
         max_units_per_type: int = Config.max_units_per_compartment,
-        max_columns_per_subproblem: int = 20,
+        max_columns_per_subproblem: int = 1,
+        use_cuts: bool = False,
         verbose: bool = False,
     ) -> None:
         self.max_units_per_type = int(max_units_per_type)
-        self.max_columns_per_subproblem = int(max_columns_per_subproblem)
+        self.max_columns_per_subproblem = 1
+        self.options = SolverPricingOptions(use_cuts=use_cuts)
+        self.wagon_capacity_cut = Config.max_units_per_compartment
         self.verbose = verbose
         self.stats = SolverPricingStats()
         self._col_counter = 0
@@ -50,18 +58,19 @@ class SolverPricingEngine:
 
         for p in modes:
             gamma_p = solution.dual_gamma.get(p, 0.0)
+            eta = solution.dual_eta if self.options.use_cuts else 0.0
             upper_duals = DualValues(
                 alpha=solution.dual_alpha,
                 beta=solution.dual_beta,
-                gamma=2.0 * (gamma_p + solution.dual_kappa),
-                branch_a={},
+                gamma=2.0 * (gamma_p + solution.dual_kappa + eta),
+                branch_a=solution.dual_branch_a,
                 branch_q=solution.dual_branch_q,
             )
             lower_duals = DualValues(
                 alpha=solution.dual_alpha,
                 beta=solution.dual_beta,
                 gamma=-2.0 * gamma_p,
-                branch_a={},
+                branch_a=solution.dual_branch_a,
                 branch_q=solution.dual_branch_q,
             )
             for compartment, duals, length_limit in [
@@ -87,7 +96,13 @@ class SolverPricingEngine:
                 ]
                 for _ in range(self.max_columns_per_subproblem):
                     t0 = time.time()
-                    result = solve_layer_pricing_mip(spec, duals, forbidden_signatures=forbidden)
+                    result = solve_layer_pricing_mip(
+                        spec,
+                        duals,
+                        forbidden_signatures=forbidden,
+                        sr_cut_duals=solution.dual_sigma if self.options.use_cuts else None,
+                        max_total_by_type=master.U,
+                    )
                     self.stats.solver_time += time.time() - t0
                     if result is None:
                         break
@@ -121,8 +136,12 @@ def solve_layer_pricing_mip(
     layer: LayerSpec,
     duals: DualValues,
     forbidden_signatures: List[Tuple[int, ...]] | None = None,
+    sr_cut_duals: Dict[Tuple[int, int, int], float] | None = None,
+    max_total_by_type: Dict[int, int] | None = None,
 ) -> Tuple[Dict[int, int], float, float] | None:
     forbidden_signatures = forbidden_signatures or []
+    sr_cut_duals = sr_cut_duals or {}
+    max_total_by_type = max_total_by_type or {}
     compartment = str(layer.shape_params.get("compartment", "lower"))
     deck = str(layer.shape_params.get("deck", "h-h"))
     mode_left, mode_right = deck.split("-")
@@ -155,11 +174,22 @@ def solve_layer_pricing_mip(
     q = {i: gp.quicksum(x[i, h] for h in region_names) for i in I}
 
     for forbid_idx, signature in enumerate(forbidden_signatures):
-        diff = model.addVars(I, vtype=gp.GRB.CONTINUOUS, lb=0.0, name=f"forbid_diff[{forbid_idx}]")
+        y_pos = model.addVars(I, vtype=gp.GRB.BINARY, name=f"forbid_pos[{forbid_idx}]")
+        y_neg = model.addVars(I, vtype=gp.GRB.BINARY, name=f"forbid_neg[{forbid_idx}]")
+        big_m = N + 1
         for i, value in zip(I, signature):
-            model.addConstr(diff[i] >= q[i] - int(value), name=f"forbid_pos[{forbid_idx},{i}]")
-            model.addConstr(diff[i] >= int(value) - q[i], name=f"forbid_neg[{forbid_idx},{i}]")
-        model.addConstr(gp.quicksum(diff[i] for i in I) >= 1.0, name=f"forbid_signature[{forbid_idx}]")
+            model.addConstr(
+                q[i] - int(value) >= 1 - big_m * (1 - y_pos[i]),
+                name=f"forbid_gt[{forbid_idx},{i}]",
+            )
+            model.addConstr(
+                int(value) - q[i] >= 1 - big_m * (1 - y_neg[i]),
+                name=f"forbid_lt[{forbid_idx},{i}]",
+            )
+        model.addConstr(
+            gp.quicksum(y_pos[i] + y_neg[i] for i in I) >= 1,
+            name=f"forbid_signature[{forbid_idx}]",
+        )
 
     for i in I:
         max_q = min(N, int(layer.max_quantity_by_type.get(i, N)))
@@ -195,6 +225,27 @@ def solve_layer_pricing_mip(
                 gp.quicksum(x[i, h] * (layer.car_lengths[i] + Delta) for i in I for h in interval_regions) <= cap
             )
 
+    sr_terms: List[Tuple[float, gp.Var]] = []
+    for cut_idx, (subset, sigma) in enumerate(sr_cut_duals.items()):
+        if abs(float(sigma)) <= 1e-12:
+            continue
+        high_vars = []
+        for i in subset:
+            high = model.addVar(vtype=gp.GRB.BINARY, name=f"sr_high[{cut_idx},{i}]")
+            threshold = int(max_total_by_type.get(i, 0) // 2 + 1)
+            max_q = min(N, int(layer.max_quantity_by_type.get(i, N)))
+            if threshold <= 0 or max_q < threshold:
+                model.addConstr(high == 0, name=f"sr_high_off[{cut_idx},{i}]")
+            else:
+                model.addConstr(q[i] >= threshold * high, name=f"sr_high_lb[{cut_idx},{i}]")
+                model.addConstr(q[i] <= threshold - 1 + max_q * high, name=f"sr_high_ub[{cut_idx},{i}]")
+            high_vars.append(high)
+        coeff = model.addVar(vtype=gp.GRB.BINARY, name=f"sr_coeff[{cut_idx}]")
+        count = gp.quicksum(high_vars)
+        model.addConstr(count >= 2 * coeff, name=f"sr_coeff_lb[{cut_idx}]")
+        model.addConstr(count <= 1 + 2 * coeff, name=f"sr_coeff_ub[{cut_idx}]")
+        sr_terms.append((float(sigma), coeff))
+
     rc = gp.LinExpr(-duals.gamma / 2.0)
     for i in I:
         coef = (
@@ -205,6 +256,8 @@ def solve_layer_pricing_mip(
         )
         rc -= coef * q[i]
         rc -= duals.branch_a.get(i, 0.0) * a[i]
+    for sigma, coeff in sr_terms:
+        rc -= sigma * coeff
     model.setObjective(rc, gp.GRB.MINIMIZE)
     model.optimize()
 

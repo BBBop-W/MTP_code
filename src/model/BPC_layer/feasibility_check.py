@@ -223,20 +223,6 @@ class LayerResourceModel:
     delta: float = 400.0
 
 
-@dataclass(frozen=True)
-class OuterInnerChoice:
-    side: str
-    block_idx: int
-    hits: Tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class LayerOuterInnerModel:
-    capacities: Tuple[float, ...]
-    choices_by_type: Dict[int, Tuple[OuterInnerChoice, ...]]
-    delta: float = 400.0
-
-
 def _split_deck_mode(deck_mode: str) -> Tuple[str, str]:
     if "-" in deck_mode:
         mode_left, mode_right = deck_mode.split("-")
@@ -254,12 +240,12 @@ def _keep_interval_for_profile(l_idx: int, r_idx: int, n_blocks: int, interval_p
 
 
 def build_layer_resource_model(layer: 'LayerSpec', interval_profile: str = "full") -> LayerResourceModel:
-    """Build the monotone interval-resource model used by residual-profile labels.
+    """Build the interval-resource model used by residual-profile labels.
 
-    This mirrors the interval constraints used in check_layer_gurobi, but keeps
-    only the outermost valid placement per side. For this nested interval model,
-    moving a car outward weakly decreases every interval usage, so those choices
-    preserve feasibility while avoiding dominated placement states.
+    This mirrors the interval constraints used in ``check_layer_gurobi`` and
+    keeps every height-feasible central/left/right component choice. Safe
+    dominance-based reductions are applied later by the label generator, so the
+    exact generator can use this model as the complete baseline.
     """
 
     mode = layer.shape_params.get("deck", "h-h")
@@ -315,32 +301,14 @@ def build_layer_resource_model(layer: 'LayerSpec', interval_profile: str = "full
     for car_type in layer.car_types:
         height = layer.car_heights[car_type]
 
-        max_l = -1
-        for idx in range(n_blocks, 0, -1):
-            if height <= limit_left[idx]:
-                max_l = idx
-                break
-        if max_l == -1 and height <= actual_limit_central:
-            max_l = 0
-
-        max_r = -1
-        for idx in range(n_blocks, 0, -1):
-            if height <= limit_right[idx]:
-                max_r = idx
-                break
-        if max_r == -1 and height <= actual_limit_central:
-            max_r = 0
-
         choices: List[PlacementChoice] = []
-        if max_l == 0 and max_r == 0:
+        if height <= actual_limit_central:
             choices.append(PlacementChoice("central", 0, hits_for("central", 0)))
-        else:
-            if max_l >= 0:
-                side = "central" if max_l == 0 else "left"
-                choices.append(PlacementChoice(side, max_l, hits_for(side, max_l)))
-            if max_r >= 0:
-                side = "central" if max_r == 0 else "right"
-                choices.append(PlacementChoice(side, max_r, hits_for(side, max_r)))
+        for idx in range(1, n_blocks + 1):
+            if height <= limit_left[idx]:
+                choices.append(PlacementChoice("left", idx, hits_for("left", idx)))
+            if height <= limit_right[idx]:
+                choices.append(PlacementChoice("right", idx, hits_for("right", idx)))
 
         dedup: Dict[Tuple[int, ...], PlacementChoice] = {}
         for choice in choices:
@@ -350,80 +318,6 @@ def build_layer_resource_model(layer: 'LayerSpec', interval_profile: str = "full
     return LayerResourceModel(
         capacities=tuple(cap for _l, _r, cap in intervals),
         intervals=tuple(intervals),
-        choices_by_type=choices_by_type,
-        delta=delta,
-    )
-
-
-def build_layer_outer_inner_model(layer: 'LayerSpec') -> LayerOuterInnerModel:
-    """Build an experimental outer-to-inner resource model.
-
-    This is intentionally smaller than the full nested (l, r) interval profile:
-    it keeps one-dimensional left/right prefix capacities, a central capacity,
-    and a total full-layer capacity. It is useful for testing an outside-in
-    canonical loading rule, while the full nested model remains the exact path.
-    """
-
-    mode = layer.shape_params.get("deck", "h-h")
-    compartment = layer.shape_params.get("compartment", "lower")
-    mode_left, mode_right = _split_deck_mode(mode)
-    pi_left = 1 if mode_left == "m" else 0
-    pi_right = 1 if mode_right == "m" else 0
-
-    segments = _get_segments_for_layer(layer.car_heights)
-    central = segments[compartment]["central"]
-    blocks = segments[compartment]["blocks"]
-    n_blocks = len(blocks)
-    delta = 400.0
-
-    limit_left = [central["h_m"] if pi_left else central["h_h"]]
-    limit_right = [central["h_m"] if pi_right else central["h_h"]]
-    for block in blocks:
-        limit_left.append(block["h_m"] if pi_left else block["h_h"])
-        limit_right.append(block["h_m"] if pi_right else block["h_h"])
-
-    actual_limit_central = min(limit_left[0], limit_right[0])
-    lengths = [central["len"]] + [block["len"] for block in blocks]
-
-    left_offset = 0
-    right_offset = n_blocks
-    central_idx = 2 * n_blocks
-    total_idx = central_idx + 1
-
-    capacities: List[float] = []
-    for idx in range(1, n_blocks + 1):
-        capacities.append(sum(lengths[1:idx + 1]))
-    for idx in range(1, n_blocks + 1):
-        capacities.append(sum(lengths[1:idx + 1]))
-    capacities.append(lengths[0] + delta)
-    capacities.append(lengths[0] + sum(lengths[1:]) * 2.0 - delta)
-
-    def side_hits(side: str, block_idx: int) -> Tuple[int, ...]:
-        offset = left_offset if side == "left" else right_offset
-        return tuple([offset + idx - 1 for idx in range(block_idx, n_blocks + 1)] + [total_idx])
-
-    choices_by_type: Dict[int, Tuple[OuterInnerChoice, ...]] = {}
-    for car_type in layer.car_types:
-        height = layer.car_heights[car_type]
-        choices: List[OuterInnerChoice] = []
-
-        for idx in range(n_blocks, 0, -1):
-            if height <= limit_left[idx]:
-                choices.append(OuterInnerChoice("left", idx, side_hits("left", idx)))
-                break
-
-        for idx in range(n_blocks, 0, -1):
-            if height <= limit_right[idx]:
-                choices.append(OuterInnerChoice("right", idx, side_hits("right", idx)))
-                break
-
-        if height <= actual_limit_central:
-            choices.append(OuterInnerChoice("central", 0, (central_idx, total_idx)))
-
-        choices_by_type[car_type] = tuple(choices)
-
-    return LayerOuterInnerModel(
-        capacities=tuple(capacities),
         choices_by_type=choices_by_type,
         delta=delta,
     )

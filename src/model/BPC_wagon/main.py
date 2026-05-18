@@ -11,65 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_wagon.BBtree import BBTree, normalize_car_table
-from src.model.BPC_wagon.CG import PatternColumn
-
-def load_vns_columns(master, csv_path: Path, prefix: str):
-    """
-    Read column.csv output from C++ VNS and inject them into the MasterProblem.
-    Format: brand, model, 1, 2, 3, 4, 5
-    """
-    if not csv_path.exists():
-        print(f"[Warn] Column file not found: {csv_path}")
-        return
-
-    # Read the column file
-    df = pd.read_csv(csv_path)
-    
-    # We need to map (brand, model) to the master problem's car type index (1 to N).
-    # master.car_info has 'program' (brand) and 'model'
-    car_type_map = {}
-    for i in master.I:
-        row = master.car_info.iloc[i - 1]
-        brand = row["program"]
-        model = row["model"]
-        car_type_map[(str(brand).strip(), str(model).strip())] = i
-
-    # The dataframe has columns: brand, model, '1', '2', ... 'N_carriages'
-    # We extract carriage counts
-    carriage_cols = [c for c in df.columns if c not in ["brand", "model"]]
-    
-    added_count = 0
-    for col_name in carriage_cols:
-        q_dict = {}
-        for _, row in df.iterrows():
-            brand = str(row["brand"]).strip()
-            model = str(row["model"]).strip()
-            qty = int(row[col_name])
-            if qty > 0:
-                key = (brand, model)
-                if key in car_type_map:
-                    car_type_idx = car_type_map[key]
-                    q_dict[car_type_idx] = qty
-                else:
-                    print(f"[Warn] Unknown car in VNS output: {brand} {model}")
-        
-        if q_dict:
-            # Calculate cost (negative total length)
-            cost = -sum(master.length[i] * q for i, q in q_dict.items())
-            
-            # Create PatternColumn
-            col_id = f"{prefix}_{col_name}"
-            pattern = PatternColumn(
-                column_id=col_id,
-                q=q_dict,
-                cost=cost,
-                metadata={"source": prefix}
-            )
-            master.add_column(pattern)
-            added_count += 1
-            
-    print(f"Loaded {added_count} columns from {csv_path.name} ({prefix})")
+from src.model.BPC_wagon.BBtree import BBTree
+from src.model.warmstart import load_wagon_warmstart_columns
 
 
 def run_bpc(
@@ -130,11 +73,12 @@ def run_bpc(
     if use_warmstart:
         # 3. Load BI and VNS columns to warmstart MasterProblem
         print("--- 3. Injecting Warmstart Columns ---")
-        bi_csv = output_dir / "BI" / "column.csv"
-        vns_csv = output_dir / "VNS" / "column.csv"
-        
-        load_vns_columns(bbtree.master, bi_csv, "BI")
-        load_vns_columns(bbtree.master, vns_csv, "VNS")
+        bi_json = output_dir / "BI" / "carriage_info.json"
+        vns_json = output_dir / "VNS" / "carriage_info.json"
+        load_wagon_warmstart_columns(
+            bbtree.master,
+            [(bi_json, "BI"), (vns_json, "VNS")],
+        )
         
         print(f"Total columns in pool before BPC: {len(bbtree.master.columns)}")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
+from math import floor
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from src.model.BPC_wagon.cuts import CutState, SimpleCutEvaluator
@@ -13,7 +14,6 @@ from src.model.BPC_layer.labeling import (
     LabelingStats,
     LayerPattern,
     generate_layer_patterns,
-    generate_layer_patterns_outer_inner,
     generate_layer_patterns_residual,
 )
 from src.model.BPC_wagon.layer_specs import LayerRunItem, build_layer_sequence
@@ -53,16 +53,16 @@ class EarlyStopPricingEngine:
         use_cuts: bool = False,
         use_rc_bound: bool = False,
         use_residual_profile: bool = True,
-        use_outer_inner_profile: bool = False,
         use_height_order: bool = True,
         use_local_residual_skyline: bool = True,
         residual_profile_mode: str = "full",
+        profile_generator_mode: str = "hyb",
         compute_reachable_types: bool = False,
         num_splits: int = 1,
         independent_mode_split: bool = True,
         max_units_per_type: int = Config.max_units_per_compartment,
         wagon_capacity_cut: int | None = 10,
-        max_columns_per_pricing: int = 20,
+        max_columns_per_pricing: int = Config.max_wagon_pricing_columns,
         verbose: bool = True,
         logger: Callable[[str], None] | None = None,
     ) -> None:
@@ -72,10 +72,10 @@ class EarlyStopPricingEngine:
             use_cuts=use_cuts,
             use_rc_bound=use_rc_bound,
             use_residual_profile=use_residual_profile,
-            use_outer_inner_profile=use_outer_inner_profile,
             use_height_order=use_height_order,
             use_local_residual_skyline=use_local_residual_skyline,
             residual_profile_mode=residual_profile_mode,
+            profile_generator_mode=profile_generator_mode,
             compute_reachable_types=compute_reachable_types,
             max_units_per_type=max_units_per_type,
         )
@@ -127,10 +127,14 @@ class EarlyStopPricingEngine:
         car_heights = {i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I}
         cut_evaluator = None
         if self.options.use_cuts:
+            self.cut_state = CutState(
+                eta_sum=lp_solution.dual_eta,
+                sigma_by_subset=lp_solution.dual_sigma,
+            )
             cut_evaluator = SimpleCutEvaluator(
                 max_total_by_type=master.U,
                 wagon_capacity=self.wagon_capacity_cut,
-                cut_state=self.cut_state,
+                cut_state=CutState(),
             )
 
         sequence = build_layer_sequence(
@@ -223,18 +227,12 @@ class EarlyStopPricingEngine:
         options = self.options
         if self._dominance_support_types and options.use_dominance:
             options = replace(options, dominance_support_types=self._dominance_support_types)
-        if self.options.use_outer_inner_profile and not self.options.use_cuts:
-            return generate_layer_patterns_outer_inner(
-                layer=item.layer,
-                duals=duals,
-                options=options,
-                stats=lab_stats,
-            )
-        if options.use_residual_profile and not options.use_cuts:
+        if options.use_residual_profile:
             return generate_layer_patterns_residual(
                 layer=item.layer,
                 duals=duals,
                 options=options,
+                cut_evaluator=cut_evaluator,
                 stats=lab_stats,
             )
         return generate_layer_patterns(
@@ -299,6 +297,12 @@ class EarlyStopPricingEngine:
                 + lp_solution.dual_branch_q.get(i, 0.0)
             ) * q
             rc -= lp_solution.dual_branch_a.get(i, 0.0)
+        if self.options.use_cuts:
+            rc -= float(lp_solution.dual_eta)
+            for subset, sigma in lp_solution.dual_sigma.items():
+                val = sum(1 for i in subset if quantities.get(i, 0) > master.U[i] / 2.0)
+                coeff = floor(0.5 * val)
+                rc -= float(sigma) * coeff
         return rc
 
     def _to_column(self, merged: MergedPattern, master: MasterProblem) -> Optional[PatternColumn]:

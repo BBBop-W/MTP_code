@@ -53,13 +53,18 @@ def normalize_car_table(cars_path: Path) -> pd.DataFrame:
     return car_info
 
 class BBNode:
-    def __init__(self, node_id: int, depth: int, branch_q_bounds: Dict[int, Tuple[float|None, float|None]] = None):
+    def __init__(
+        self,
+        node_id: int,
+        depth: int,
+        branch_a_bounds: Dict[int, Tuple[float | None, float | None]] = None,
+        branch_q_bounds: Dict[int, Tuple[float | None, float | None]] = None,
+    ):
         self.node_id = node_id
         self.depth = depth
+        self.branch_a_bounds = branch_a_bounds or {}
         self.branch_q_bounds = branch_q_bounds or {}
         self.lower_bound = -math.inf
-        # In this LayerMaster decoupled version, we DO NOT branch on a_i because a_i requires
-        # identifying columns as "a full wagon". A LayerColumn is only half a wagon. 
 
 class BBTree:
     def __init__(
@@ -74,11 +79,12 @@ class BBTree:
         pricing_method: str = "labeling",
         use_rc_bound: bool = True,
         use_residual_profile: bool = True,
-        use_outer_inner_profile: bool = False,
         use_height_order: bool = True,
         use_local_residual_skyline: bool = True,
         residual_profile_mode: str = "full",
+        profile_generator_mode: str = "hyb",
         compute_reachable_types: bool = False,
+        max_columns_per_subproblem: int = Config.max_layer_pricing_columns_per_subproblem,
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
         mip_gap_tol: float = 5e-6,
@@ -110,16 +116,19 @@ class BBTree:
                 use_cuts=use_cuts,
                 use_rc_bound=use_rc_bound,
                 use_residual_profile=use_residual_profile,
-                use_outer_inner_profile=use_outer_inner_profile,
                 use_height_order=use_height_order,
                 use_local_residual_skyline=use_local_residual_skyline,
                 residual_profile_mode=residual_profile_mode,
+                profile_generator_mode=profile_generator_mode,
                 compute_reachable_types=compute_reachable_types,
+                max_columns_per_subproblem=max_columns_per_subproblem,
                 verbose=print_subproblem_progress,
             )
         elif self.pricing_method == "solver":
             pricing_engine = SolverPricingEngine(
                 max_units_per_type=Config.max_units_per_compartment,
+                max_columns_per_subproblem=1,
+                use_cuts=use_cuts,
                 verbose=print_subproblem_progress,
             )
         else:
@@ -168,7 +177,7 @@ class BBTree:
             explored += 1
 
             lp_solution = self.cg_engine.solve(
-                branch_a_bounds=None, 
+                branch_a_bounds=node.branch_a_bounds,
                 branch_q_bounds=node.branch_q_bounds
             )
             
@@ -227,6 +236,7 @@ class BBTree:
             branch_var = self.master.choose_branch_var(lp_solution)
             if branch_var is None:
                 ip_solution = self.master.solve_restricted_ip(
+                    branch_a_bounds=node.branch_a_bounds,
                     branch_q_bounds=node.branch_q_bounds,
                     time_limit=Config.timelimit,
                     log_to_console=False,
@@ -257,19 +267,37 @@ class BBTree:
 
             left_q = dict(node.branch_q_bounds)
             right_q = dict(node.branch_q_bounds)
+            left_a = dict(node.branch_a_bounds)
+            right_a = dict(node.branch_a_bounds)
 
-            old_left = left_q.get(car_type, (None, None))
-            left_q[car_type] = (old_left[0], floor_v)
-            old_right = right_q.get(car_type, (None, None))
-            right_q[car_type] = (ceil_v, old_right[1])
+            if b_type == 'a':
+                old_left = left_a.get(car_type, (None, None))
+                left_a[car_type] = (old_left[0], floor_v)
+                old_right = right_a.get(car_type, (None, None))
+                right_a[car_type] = (ceil_v, old_right[1])
+            else:
+                old_left = left_q.get(car_type, (None, None))
+                left_q[car_type] = (old_left[0], floor_v)
+                old_right = right_q.get(car_type, (None, None))
+                right_q[car_type] = (ceil_v, old_right[1])
 
             node_counter += 1
-            left_node = BBNode(node_id=node_counter, depth=node.depth + 1, branch_q_bounds=left_q)
+            left_node = BBNode(
+                node_id=node_counter,
+                depth=node.depth + 1,
+                branch_a_bounds=left_a,
+                branch_q_bounds=left_q,
+            )
             left_node.lower_bound = current_bound
             queue.append(left_node)
             
             node_counter += 1
-            right_node = BBNode(node_id=node_counter, depth=node.depth + 1, branch_q_bounds=right_q)
+            right_node = BBNode(
+                node_id=node_counter,
+                depth=node.depth + 1,
+                branch_a_bounds=right_a,
+                branch_q_bounds=right_q,
+            )
             right_node.lower_bound = current_bound
             queue.append(right_node)
 
