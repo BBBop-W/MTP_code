@@ -7,7 +7,7 @@ class config:
     timelimit = 900
     max_units_per_compartment = 10
     max_wagon_pricing_columns = 20
-    max_layer_pricing_columns_per_subproblem = 20
+    max_compartment_pricing_columns_per_subproblem = 20
     gurobi_threads = None
 
     @classmethod

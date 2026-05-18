@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_layer.labeling import LayerPattern
+from src.model.BPC_compartment.labeling import CompartmentPattern
 
 
 @dataclass(frozen=True)
@@ -21,16 +21,16 @@ class MergedPattern:
     deck: str
     quantities: Dict[int, int]
     reduced_cost: float
-    upper: LayerPattern
-    lower: LayerPattern
+    upper: CompartmentPattern
+    lower: CompartmentPattern
 
 
 def merge_first_feasible(
-    upper_patterns: List[LayerPattern],
-    lower_patterns: List[LayerPattern],
+    upper_patterns: List[CompartmentPattern],
+    lower_patterns: List[CompartmentPattern],
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
-    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
+    reduced_cost_fn: Callable[[CompartmentPattern, CompartmentPattern, Dict[int, int]], float] | None = None,
     forbidden_signatures: set[Tuple[int, ...]] | None = None,
     signature_order: List[int] | None = None,
     select_best: bool = False,
@@ -76,11 +76,11 @@ def merge_first_feasible(
 
 
 def merge_feasible_patterns(
-    upper_patterns: List[LayerPattern],
-    lower_patterns: List[LayerPattern],
+    upper_patterns: List[CompartmentPattern],
+    lower_patterns: List[CompartmentPattern],
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
-    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
+    reduced_cost_fn: Callable[[CompartmentPattern, CompartmentPattern, Dict[int, int]], float] | None = None,
     forbidden_signatures: set[Tuple[int, ...]] | None = None,
     signature_order: List[int] | None = None,
     max_results: int | None = None,
@@ -127,10 +127,10 @@ def merge_feasible_patterns(
 
 def merge_patterns_for_mode(
     mode: str,
-    patterns_by_layer: Dict[str, List[LayerPattern]],
+    patterns_by_compartment: Dict[str, List[CompartmentPattern]],
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
-    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
+    reduced_cost_fn: Callable[[CompartmentPattern, CompartmentPattern, Dict[int, int]], float] | None = None,
 ) -> Optional[MergedPattern]:
     """
     Given a specific mode (e.g. 'h-h', 'h-m', 'm-h', 'm-m'), extract the matching
@@ -139,8 +139,8 @@ def merge_patterns_for_mode(
     upper_key = f"upper_{mode}"
     lower_key = f"lower_{mode}"
     
-    upper_patterns = patterns_by_layer.get(upper_key, [])
-    lower_patterns = patterns_by_layer.get(lower_key, [])
+    upper_patterns = patterns_by_compartment.get(upper_key, [])
+    lower_patterns = patterns_by_compartment.get(lower_key, [])
     
     return merge_first_feasible(
         upper_patterns, 
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     
     # 1. Create Dummy upper and lower patterns for all 4 deck modes
     modes = ["h-h", "h-m", "m-h", "m-m"]
-    patterns_by_layer: Dict[str, List[LayerPattern]] = {}
+    patterns_by_compartment: Dict[str, List[CompartmentPattern]] = {}
     
     # Dummy car types
     car_types = [101, 102, 103]
@@ -184,23 +184,23 @@ if __name__ == "__main__":
         lower_key = f"lower_{mode}"
         
         # Upper Patterns (RC from -100 to -5000)
-        patterns_by_layer[upper_key] = [
-            LayerPattern(
-                layer_id=upper_key,
+        patterns_by_compartment[upper_key] = [
+            CompartmentPattern(
+                compartment_id=upper_key,
                 quantities={101: 2, 102: 0, 103: 1},
                 reduced_cost=-5000.0,
                 best_length=15000.0,
                 shape_params={"deck": mode, "compartment": "upper"}
             ),
-            LayerPattern(
-                layer_id=upper_key,
+            CompartmentPattern(
+                compartment_id=upper_key,
                 quantities={101: 3, 102: 0, 103: 0},
                 reduced_cost=-4000.0,
                 best_length=14000.0,
                 shape_params={"deck": mode, "compartment": "upper"}
             ),
-            LayerPattern(
-                layer_id=upper_key,
+            CompartmentPattern(
+                compartment_id=upper_key,
                 quantities={101: 1, 102: 1, 103: 0},
                 reduced_cost=-100.0,  # Not great
                 best_length=10000.0,
@@ -209,16 +209,16 @@ if __name__ == "__main__":
         ]
         
         # Lower Patterns (RC from -50 to -4000)
-        patterns_by_layer[lower_key] = [
-            LayerPattern(
-                layer_id=lower_key,
+        patterns_by_compartment[lower_key] = [
+            CompartmentPattern(
+                compartment_id=lower_key,
                 quantities={101: 1, 102: 2, 103: 1},
                 reduced_cost=-4000.0,
                 best_length=18000.0,
                 shape_params={"deck": mode, "compartment": "lower"}
             ),
-            LayerPattern(
-                layer_id=lower_key,
+            CompartmentPattern(
+                compartment_id=lower_key,
                 quantities={101: 3, 102: 1, 103: 0},  # This will exceed max_total_by_type (101: 2 + 3 = 5 > 4) if combined with top upper pattern
                 reduced_cost=-5000.0, # Better RC, but will be rejected when combined with top upper pattern!
                 best_length=19000.0,
@@ -231,7 +231,7 @@ if __name__ == "__main__":
         print(f"\\n--- Testing Mode: {mode} ---")
         best_merge = merge_patterns_for_mode(
             mode=mode,
-            patterns_by_layer=patterns_by_layer,
+            patterns_by_compartment=patterns_by_compartment,
             max_total_by_type=max_total_by_type,
             require_negative_reduced_cost=True
         )

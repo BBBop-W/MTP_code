@@ -50,7 +50,7 @@ class CGStats:
     master_time: float = 0.0
     pricing_time: float = 0.0
     labeling_time: float = 0.0
-    bs_time: float = 0.0
+    feasibility_time: float = 0.0
     merge_time: float = 0.0
     solver_time: float = 0.0
     solver_nodes: float = 0.0
@@ -363,14 +363,14 @@ class ColumnGenerationEngine:
             
             # Extract sub-stats from pricing engine
             self.stats.labeling_time += self.pricing_engine.stats.labeling_time
-            self.stats.bs_time += self.pricing_engine.stats.bs_time
+            self.stats.feasibility_time += self.pricing_engine.stats.feasibility_time
             self.stats.merge_time += self.pricing_engine.stats.merge_time
             self.stats.solver_time += getattr(self.pricing_engine.stats, "solver_time", 0.0)
             self.stats.solver_nodes += getattr(self.pricing_engine.stats, "solver_nodes", 0.0)
             
             # Reset pricing engine stats for next iteration to avoid double counting
             self.pricing_engine.stats.labeling_time = 0.0
-            self.pricing_engine.stats.bs_time = 0.0
+            self.pricing_engine.stats.feasibility_time = 0.0
             self.pricing_engine.stats.merge_time = 0.0
             if hasattr(self.pricing_engine.stats, "solver_time"):
                 self.pricing_engine.stats.solver_time = 0.0

@@ -28,12 +28,12 @@
 *   **算子优化**：废弃了低效的全局 Best Improvement 算子，引入并混排了 `RelocateRandom`, `SwapRandom`, `OptRandom` 等 **First Improvement (首次改进)** 算子。
 *   **时间熔断机制**：全局超时 (300秒) 和 无提升超时 (15~120秒)。保证代码在大规模下不会假死。
 
-## 4. BPC 精确求解器优化 (Python `src/model/BPC_layer/`)
+## 4. BPC 精确求解器优化 (Python `src/model/BPC_compartment/`)
 *   **安全距离免检策略 (`labeling.py`)**：引入了极速剪枝机制。只要单层车辆数 $\le 2$ 或者“所有车辆总长 + 缓冲间距”塞得进最核心的无分隔大区（上层 14.9m，下层 12.4m），就**直接跳过 DP 和 Gurobi 检查**。该策略使 Feasibility Check 耗时**暴降 150 倍**。
 *   **MIP Gap 与分支树追踪 (`BBtree.py`)**：
     *   加入全局 Lower Bound (LP 放宽后的理论下界) 追踪。
     *   当找到的全整数解 (Incumbent) 与全局理论下界的间隙（MIP Gap） $\le 0.01\%$ (`1e-4`) 时，自动宣告证明全局最优并退出搜索。
-    *   由于列变成了单层列，全车厢变量 $a_i$ 失去物理定义，目前分支定界树仅对 $q_i$ （装载数量）进行分支。
+    *   当前实现使用 compartment-level 列，并通过 $a_i$ 与 $q_i$ 的聚合变量进行分支。
 
 ## 5. 里程碑测试数据与结论
 目前的联合求解器（Python 调度 C++ VNS 并接收 JSON 列文
@@ -49,7 +49,7 @@
 
 ### 4.2. DFS 动态回溯可行性检验 (Subproblem Speedup)
 - **痛点**：随着动态切割数量 (`num_splits`) 的增加，Gurobi 独立模型由于内部必须维护 $O(N^2)$ 数量级的连续区间容量约束，极易引发组合爆炸（如 `m6c6` 切 4 块时 Gurobi 会耗时数分钟无法收敛）。
-- **解决方案 (`dynamic_recursive_bs`)**：在 `feasibility_check.py` 中，手写了针对一维装箱特化的 **纯 Python 深度优先搜索 (DFS) 算法**。
+- **解决方案 (`check_compartment_exact`)**：在 `feasibility_check.py` 中，保留了用于 warmstart 校验的一维装箱 **精确 DFS 可行性检查器**。
   - **核心机制**：通过“按车高降序排列”，强制算法始终从最高处（车厢中心 `central`）开始向两侧递归摆放。
   - **光速剪枝**：一旦某一侧的累加长度突破了任意一个动态区间容量（Interval Capacity），立刻触发回溯。
   - **结果**：该 DFS 在 1 秒内可验证上百万条分支。在极限切块难度下，DFS 将 BPC 的子问题求解时间从极其漫长的 Gurobi 求解压缩到了 **仅需 1~3 秒 (根节点闭合)**，实现了对 Gurobi 原生模型数十倍的跨代碾压。
@@ -60,10 +60,5 @@
 - 它在内部复刻了 Python 的区间切割数学方程，并将低效的掩码枚举替换成了原汁原味的 C++ DFS 递归校验。
 - **战绩**：在 `m10c10` (10车型，10车厢) 的庞大算例中，C++ VNS 能够毫不费力地在十几秒内完成上百万次邻域评估，无缝为后续的 Python 主问题输送全法合规的初始列。
 
-### 4.4. 理论对比：标准 DW 模型基线 (`src/model/BPC_Standard`)
-为了严密论证 LayerMaster（上下层解耦）架构的降维有效性，我们新建了 `DantzigWolfe.py` 作为正统学术基线（Baseline）。
-- **结构**：该模型完全回归传统，**以“一整节完整的车厢（上下层锁定）”作为一列**，并且使用原生的 Gurobi ILP 作为定价子问题（Pricing Problem），配套编写了完整的聚合变量分支法则 ($a_i$ 与 $q_i$) 的 Branch-and-Price 树。
-- **数学印证**：
-  - 在 `m6c6` 和 `m7c7` 上，Standard DW 模型与 LayerMaster 算出的 **连续松弛下界 (LP Root Bound) 完全一模一样**（分别为 -255392.00 和 -303919.00）。这在运筹学上给出了铁证：LayerMaster 架构没有在变形中损失任何约束精度。
-  - **降维重组优势**：在搜寻整数最优解阶段，Standard DW 由于车厢上下层锁定，必须疯狂向下分支几百个节点（引发组合膨胀）；而 LayerMaster 利用上下层拆分解耦的特性，通过 $\theta_p^{upper}$ 和 $\theta_p^{lower}$ 的自由乱序重组，直接在 **根节点（0 节点）瞬间秒杀出了完全相同的完美整数最优解**！
-- **结论**：传统 Subset Row Cuts 等全车厢维度的割平面在目前的解耦架构中既不可行也毫无必要。解耦后的 BPC 已具备工业级求解效率，是当前理论的终极版本。
+### 4.4. 当前保留的 BPC 路径
+当前模型目录只保留 compact Gurobi、wagon master、compartment master，以及共享的 warmstart/feasibility 工具。旧版 Standard DW baseline 和 Python VNS 已清理，后续数值实验以 `BPC_wagon`、`BPC_compartment`、`gurobi.py` 与 `VNS_cpp` 为准。

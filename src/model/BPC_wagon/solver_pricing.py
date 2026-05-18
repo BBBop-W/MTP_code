@@ -15,7 +15,7 @@ from src.utility.dynamic_segmentation import get_model_segments
 @dataclass
 class SolverPricingStats:
     labeling_time: float = 0.0
-    bs_time: float = 0.0
+    feasibility_time: float = 0.0
     merge_time: float = 0.0
     solver_time: float = 0.0
     solver_nodes: float = 0.0
@@ -100,18 +100,18 @@ class SolverPricingEngine:
         h_h_limits: Dict[str, float] = {}
         h_m_limits: Dict[str, float] = {}
 
-        def add_layer(layer_prefix: str, target: List[str]) -> int:
-            central = f"{layer_prefix}_central"
+        def add_layer(compartment_prefix: str, target: List[str]) -> int:
+            central = f"{compartment_prefix}_central"
             H.append(central)
             target.append(central)
             component_side[central] = "central"
-            L[central] = float(segments_data[layer_prefix]["central"]["len"])
-            h_h_limits[central] = float(segments_data[layer_prefix]["central"]["h_h"])
-            h_m_limits[central] = float(segments_data[layer_prefix]["central"]["h_m"])
-            blocks = segments_data[layer_prefix]["blocks"]
+            L[central] = float(segments_data[compartment_prefix]["central"]["len"])
+            h_h_limits[central] = float(segments_data[compartment_prefix]["central"]["h_h"])
+            h_m_limits[central] = float(segments_data[compartment_prefix]["central"]["h_m"])
+            blocks = segments_data[compartment_prefix]["blocks"]
             for block in blocks:
                 for side in ["left", "right"]:
-                    name = f"{layer_prefix}_{block['name']}_{side}"
+                    name = f"{compartment_prefix}_{block['name']}_{side}"
                     H.append(name)
                     target.append(name)
                     component_side[name] = side
@@ -134,13 +134,13 @@ class SolverPricingEngine:
                 limit = height_limit(h, deck_side_mode[p][side])
             return int(heights[i] <= limit)
 
-        def get_intervals(layer_prefix: str, num_blocks: int):
+        def get_intervals(compartment_prefix: str, num_blocks: int):
             intervals = []
             for left_count in range(num_blocks + 1):
                 for right_count in range(num_blocks + 1):
-                    blocks = [f"{layer_prefix}_central"]
-                    blocks.extend(f"{layer_prefix}_block_{idx}_left" for idx in range(1, left_count + 1))
-                    blocks.extend(f"{layer_prefix}_block_{idx}_right" for idx in range(1, right_count + 1))
+                    blocks = [f"{compartment_prefix}_central"]
+                    blocks.extend(f"{compartment_prefix}_block_{idx}_left" for idx in range(1, left_count + 1))
+                    blocks.extend(f"{compartment_prefix}_block_{idx}_right" for idx in range(1, right_count + 1))
                     if left_count == num_blocks and right_count == num_blocks:
                         mod = -400.0
                     elif left_count == num_blocks or right_count == num_blocks:

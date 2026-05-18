@@ -1,2 +1,236 @@
-from src.model.BPC_layer.pricing import *  # noqa: F401,F403
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
+from dataclasses import dataclass
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from src.model.BPC_compartment.CG import MasterProblem, MasterLPSolution, PatternColumn
+from src.model.BPC_compartment.labeling import (
+    CompartmentSpec,
+    generate_compartment_patterns_residual,
+    DualValues,
+    LabelingOptions,
+    LabelingStats,
+)
+from src.utility.config import config as Config
+
+@dataclass
+class PricingStats:
+    labeling_time: float = 0.0
+    feasibility_time: float = 0.0
+    labels_feasible: int = 0
+    labels_pruned_by_bound: int = 0
+    labels_pruned_by_dominance: int = 0
+    labels_pruned_by_local_skyline: int = 0
+    labels_after_dominance: int = 0
+    reachability_probes: int = 0
+
+@dataclass
+class PricingOptions:
+    use_dominance: bool = True
+    use_cuts: bool = False
+    use_rc_bound: bool = True
+    use_height_order: bool = True
+    use_local_residual_skyline: bool = True
+    residual_profile_mode: str = "full"
+    profile_generator_mode: str = "hyb"
+    max_units_per_type: int = 10
+    max_columns_per_subproblem: int = Config.max_compartment_pricing_columns_per_subproblem
+
+class EarlyStopPricingEngine:
+    def __init__(
+        self,
+        use_dominance: bool = True,
+        use_cuts: bool = False,
+        use_rc_bound: bool = True,
+        use_height_order: bool = True,
+        use_local_residual_skyline: bool = True,
+        residual_profile_mode: str = "full",
+        profile_generator_mode: str = "hyb",
+        max_units_per_type: int = 10,
+        max_columns_per_subproblem: int = Config.max_compartment_pricing_columns_per_subproblem,
+        verbose: bool = False,
+    ):
+        self.options = PricingOptions(
+            use_dominance=use_dominance,
+            use_cuts=use_cuts,
+            use_rc_bound=use_rc_bound,
+            use_height_order=use_height_order,
+            use_local_residual_skyline=use_local_residual_skyline,
+            residual_profile_mode=residual_profile_mode,
+            profile_generator_mode=profile_generator_mode,
+            max_units_per_type=max_units_per_type,
+            max_columns_per_subproblem=max_columns_per_subproblem,
+        )
+        self.verbose = verbose
+        self.wagon_capacity_cut: Optional[int] = Config.max_units_per_compartment
+        self.stats = PricingStats()
+        self._col_counter = 0
+
+    def generate_columns(
+        self, solution: MasterLPSolution, master: MasterProblem
+    ) -> List[PatternColumn]:
+        self.stats.labeling_time = 0.0
+        self.stats.feasibility_time = 0.0
+        self.stats.labels_feasible = 0
+        self.stats.labels_pruned_by_bound = 0
+        self.stats.labels_pruned_by_dominance = 0
+        self.stats.labels_pruned_by_local_skyline = 0
+        self.stats.labels_after_dominance = 0
+        self.stats.reachability_probes = 0
+        modes = ["h-h", "h-m", "m-h", "m-m"]
+        new_columns = []
+
+        from src.model.BPC_compartment.cuts import SimpleCutEvaluator, CutState
+        cut_evaluator = None
+        if self.options.use_cuts:
+            cut_state = CutState(eta_sum=solution.dual_eta, sigma_by_subset=solution.dual_sigma)
+            max_totals = master.U
+            cut_evaluator = SimpleCutEvaluator(max_total_by_type=max_totals, cut_state=cut_state)
+
+        for p in modes:
+            gamma_p = solution.dual_gamma.get(p, 0.0)
+            kappa = solution.dual_kappa
+
+            # UPPER
+            compartment_id_u = f"upper_{p}"
+            spec_u = CompartmentSpec(
+                compartment_id=compartment_id_u,
+                car_types=master.I,
+                car_lengths=master.length,
+                car_heights={i: float(master.car_info.iloc[i-1]["height"]) for i in master.I},
+                compartment_length_limit=Config.top_len,
+                shape_params={"compartment": "upper", "deck": p},
+                max_quantity_by_type={
+                    i: min(self.options.max_units_per_type, master.U[i])
+                    for i in master.I
+                },
+            )
+
+            duals_u = DualValues(
+                alpha=solution.dual_alpha,
+                beta=solution.dual_beta,
+                gamma=2.0 * (gamma_p + kappa), 
+                branch_a=solution.dual_branch_a,
+                branch_q=solution.dual_branch_q,
+            )
+
+            t_start = time.time()
+            lab_stats = LabelingStats()
+            label_options = LabelingOptions(
+                use_dominance=self.options.use_dominance,
+                use_cuts=self.options.use_cuts,
+                use_rc_bound=self.options.use_rc_bound,
+                use_height_order=self.options.use_height_order,
+                use_local_residual_skyline=self.options.use_local_residual_skyline,
+                residual_profile_mode=self.options.residual_profile_mode,
+                profile_generator_mode=self.options.profile_generator_mode,
+                max_units_per_type=self.options.max_units_per_type,
+            )
+            patterns_u = generate_compartment_patterns_residual(
+                compartment_spec=spec_u,
+                duals=duals_u,
+                options=label_options,
+                cut_evaluator=cut_evaluator,
+                stats=lab_stats,
+            )
+            self.stats.labeling_time += (time.time() - t_start)
+            self._accumulate_labeling_stats(lab_stats)
+
+            for pat in self._negative_top_k(patterns_u):
+                if pat.reduced_cost < -1e-5:
+                    self._col_counter += 1
+                    col = PatternColumn(
+                        column_id=f"new_{self._col_counter}",
+                        q=pat.quantities,
+                        cost=-sum(master.length[i]*qty for i, qty in pat.quantities.items()),
+                        compartment="upper",
+                        deck_mode=p,
+                        metadata={"source": "pricing", "rc": pat.reduced_cost}
+                    )
+                    new_columns.append(col)
+
+            # LOWER
+            compartment_id_l = f"lower_{p}"
+            spec_l = CompartmentSpec(
+                compartment_id=compartment_id_l,
+                car_types=master.I,
+                car_lengths=master.length,
+                car_heights={i: float(master.car_info.iloc[i-1]["height"]) for i in master.I},
+                compartment_length_limit=Config.bottom_len,
+                shape_params={"compartment": "lower", "deck": p},
+                max_quantity_by_type={
+                    i: min(self.options.max_units_per_type, master.U[i])
+                    for i in master.I
+                },
+            )
+
+            # For lower: we want + gamma_p instead of - gamma_p. And no kappa.
+            # So root RC needs to be + gamma_p.
+            # `-duals.gamma / 2.0` = `gamma_p` => `duals.gamma` = `-2.0 * gamma_p`
+            t_start = time.time()
+            
+            duals_l = DualValues(
+                alpha=solution.dual_alpha,
+                beta=solution.dual_beta,
+                gamma=-2.0 * gamma_p,
+                branch_a=solution.dual_branch_a,
+                branch_q=solution.dual_branch_q,
+            )
+            
+            lab_stats = LabelingStats()
+            label_options = LabelingOptions(
+                use_dominance=self.options.use_dominance,
+                use_cuts=self.options.use_cuts,
+                use_rc_bound=self.options.use_rc_bound,
+                use_height_order=self.options.use_height_order,
+                use_local_residual_skyline=self.options.use_local_residual_skyline,
+                residual_profile_mode=self.options.residual_profile_mode,
+                profile_generator_mode=self.options.profile_generator_mode,
+                max_units_per_type=self.options.max_units_per_type,
+            )
+            patterns_l = generate_compartment_patterns_residual(
+                compartment_spec=spec_l,
+                duals=duals_l,
+                options=label_options,
+                cut_evaluator=cut_evaluator,
+                stats=lab_stats,
+            )
+            self.stats.labeling_time += (time.time() - t_start)
+            self._accumulate_labeling_stats(lab_stats)
+
+            for pat in self._negative_top_k(patterns_l):
+                if pat.reduced_cost < -1e-5:
+                    self._col_counter += 1
+                    col = PatternColumn(
+                        column_id=f"new_{self._col_counter}",
+                        q=pat.quantities,
+                        cost=-sum(master.length[i]*qty for i, qty in pat.quantities.items()),
+                        compartment="lower",
+                        deck_mode=p,
+                        metadata={"source": "pricing", "rc": pat.reduced_cost}
+                    )
+                    new_columns.append(col)
+
+        new_columns.sort(key=lambda c: c.metadata["rc"]) 
+        return new_columns
+
+    def _negative_top_k(self, patterns):
+        return sorted(
+            (pat for pat in patterns if pat.reduced_cost < -1e-5),
+            key=lambda pat: pat.reduced_cost,
+        )[: self.options.max_columns_per_subproblem]
+
+    def _accumulate_labeling_stats(self, lab_stats: LabelingStats) -> None:
+        self.stats.labels_feasible += lab_stats.labels_feasible
+        self.stats.labels_pruned_by_bound += lab_stats.labels_pruned_by_bound
+        self.stats.labels_pruned_by_dominance += lab_stats.labels_pruned_by_dominance
+        self.stats.labels_pruned_by_local_skyline += lab_stats.labels_pruned_by_local_skyline
+        self.stats.labels_after_dominance += lab_stats.labels_after_dominance
+        self.stats.reachability_probes += lab_stats.reachability_probes

@@ -29,7 +29,7 @@ from src.experiments.variable_length_gr_hybrid import (
     compare_profile_maps,
     solve_instance,
 )
-from src.model.BPC_layer.BBtree import normalize_car_table
+from src.model.BPC_compartment.BBtree import normalize_car_table
 from src.utility.dynamic_segmentation import get_model_segments
 
 
@@ -46,7 +46,7 @@ class RealVariant:
 
 
 @dataclass(frozen=True)
-class LayerPattern:
+class CompartmentPattern:
     compartment: str
     deck: str
     quantities: QuantityKey
@@ -236,9 +236,9 @@ def generate_layer_patterns(
     max_quantity_by_type: Dict[int, int],
     reference_maps: Dict[Tuple[str, str], Dict[QuantityKey, List[Tuple[float, ...]]]] | None = None,
     generation_time_limit: float | None = None,
-) -> Tuple[List[LayerPattern], Dict[str, object], Dict[Tuple[str, str], Dict[QuantityKey, List[Tuple[float, ...]]]]]:
+) -> Tuple[List[CompartmentPattern], Dict[str, object], Dict[Tuple[str, str], Dict[QuantityKey, List[Tuple[float, ...]]]]]:
     nominal = {i: float(car_info.iloc[i - 1]["length"]) for i in range(1, len(car_info) + 1)}
-    patterns: List[LayerPattern] = []
+    patterns: List[CompartmentPattern] = []
     profile_maps: Dict[Tuple[str, str], Dict[QuantityKey, List[Tuple[float, ...]]]] = {}
     start = time.perf_counter()
     totals = {
@@ -303,7 +303,7 @@ def generate_layer_patterns(
                 missing_keys_total += int(cmp["missing_keys"])
             for key in profile_map:
                 if key:
-                    patterns.append(LayerPattern(compartment, deck, key, _pattern_value(key, nominal)))
+                    patterns.append(CompartmentPattern(compartment, deck, key, _pattern_value(key, nominal)))
             totals["layer_count"] += 1
             totals["quantity_keys_total"] += len(profile_map)
             totals["profiles_total"] += sum(len(v) for v in profile_map.values())
@@ -326,7 +326,7 @@ def generate_layer_patterns(
 def solve_pattern_master(
     car_info: pd.DataFrame,
     carriage_num: int,
-    patterns: List[LayerPattern],
+    patterns: List[CompartmentPattern],
     mandatory: Dict[int, int],
     optional: Dict[int, int],
     time_limit: float | None = None,

@@ -14,8 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_layer.feasibility_check as layer_feasibility
-import src.model.BPC_wagon.feasibility_check as wagon_feasibility
+import src.model.BPC_compartment.feasibility_check as compartment_feasibility
 from src.model.BPC_compartment.BBtree import BBTree as CompartmentBBTree
 from src.model.BPC_wagon.BBtree import BBTree as WagonBBTree
 from src.model.gurobi import build_and_solve
@@ -23,10 +22,9 @@ from src.utility.config import config as Config
 
 
 def _set_segmentation(num_splits: int, independent_mode_split: bool) -> None:
-    for module in [layer_feasibility, wagon_feasibility]:
-        module.GLOBAL_NUM_SPLITS = int(num_splits)
-        module.GLOBAL_INDEP_MODE = bool(independent_mode_split)
-        module._SEGMENTS_CACHE.clear()
+    compartment_feasibility.GLOBAL_NUM_SPLITS = int(num_splits)
+    compartment_feasibility.GLOBAL_INDEP_MODE = bool(independent_mode_split)
+    compartment_feasibility._SEGMENTS_CACHE.clear()
 
 
 def run_method(
@@ -63,7 +61,7 @@ def run_method(
             print_bb_progress=False,
             print_subproblem_progress=False,
         )
-    elif family in {"layer", "compartment"}:
+    elif family == "compartment":
         tree = CompartmentBBTree(
             instance_dir=instance_dir,
             output_root=output_root / f"compartment_{pricing_method}",
@@ -73,10 +71,8 @@ def run_method(
             use_dominance=True,
             use_cuts=use_cuts,
             pricing_method=pricing_method,
-            use_residual_profile=True,
             residual_profile_mode="full",
             profile_generator_mode=profile_generator_mode,
-            compute_reachable_types=False,
             max_columns_per_subproblem=compartment_columns_per_subproblem,
             mip_gap_tol=mip_gap_tol,
             print_bb_progress=False,
@@ -89,8 +85,8 @@ def run_method(
     elapsed = time.perf_counter() - t0
     objective = result.best_objective
     return {
-        "method": f"{'compartment' if family == 'layer' else family}_{pricing_method}",
-        "family": "compartment" if family == "layer" else family,
+        "method": f"{family}_{pricing_method}",
+        "family": family,
         "pricing_method": pricing_method,
         "use_cuts": use_cuts,
         "objective": objective,
@@ -104,7 +100,7 @@ def run_method(
         "master_time": tree.cg_engine.stats.master_time,
         "pricing_time": tree.cg_engine.stats.pricing_time,
         "labeling_time": tree.cg_engine.stats.labeling_time,
-        "bs_time": tree.cg_engine.stats.bs_time,
+        "feasibility_time": tree.cg_engine.stats.feasibility_time,
         "merge_time": tree.cg_engine.stats.merge_time,
         "subproblem_solver_time": tree.cg_engine.stats.solver_time,
         "subproblem_solver_nodes": tree.cg_engine.stats.solver_nodes,
@@ -152,7 +148,7 @@ def run_gurobi_method(
         "master_time": None,
         "pricing_time": None,
         "labeling_time": None,
-        "bs_time": None,
+        "feasibility_time": None,
         "merge_time": None,
         "subproblem_solver_time": summary.get("runtime_sec"),
         "subproblem_solver_nodes": summary.get("node_count"),
@@ -173,10 +169,9 @@ def main() -> None:
     parser.add_argument("--wagon-pricing-columns", type=int, default=Config.max_wagon_pricing_columns)
     parser.add_argument(
         "--compartment-columns-per-subproblem",
-        "--layer-columns-per-subproblem",
         dest="compartment_columns_per_subproblem",
         type=int,
-        default=Config.max_layer_pricing_columns_per_subproblem,
+        default=Config.max_compartment_pricing_columns_per_subproblem,
     )
     parser.add_argument("--use-cuts", action="store_true")
     parser.add_argument("--profile-generator-mode", choices=["ex", "gr", "hyb"], default="hyb")
@@ -245,7 +240,7 @@ def main() -> None:
 
     print(
         "method,use_cuts,objective,loaded_length,best_bound,bpc_gap,generated_columns,active_sr_cuts,"
-        "total_time,master_time,pricing_time,labeling_time,bs_time,merge_time,"
+        "total_time,master_time,pricing_time,labeling_time,feasibility_time,merge_time,"
         "subproblem_solver_time,subproblem_solver_nodes,abs_gap_to_best,rel_gap_to_best,aligned_with_best"
     )
     for row in rows:
@@ -259,7 +254,7 @@ def main() -> None:
         print(
             f"{row['method']},{row.get('use_cuts')},{row['objective']},{row['loaded_length']},{row['best_bound']},{row['bpc_gap']},"
             f"{row['generated_columns']},{row.get('active_sr_cuts')},{fmt(row['total_time'])},{fmt(row['master_time'])},"
-            f"{fmt(row['pricing_time'])},{fmt(row['labeling_time'])},{fmt(row['bs_time'])},"
+            f"{fmt(row['pricing_time'])},{fmt(row['labeling_time'])},{fmt(row['feasibility_time'])},"
             f"{fmt(row['merge_time'])},{fmt(row['subproblem_solver_time'])},{fmt(row['subproblem_solver_nodes'], 0)},"
             f"{row['abs_gap_to_best']},{row['rel_gap_to_best']},{row['aligned_with_best']}"
         )

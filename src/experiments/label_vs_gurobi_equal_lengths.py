@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_layer.feasibility_check as feasibility_check
+import src.model.BPC_compartment.feasibility_check as feasibility_check
 from src.experiments.compare_ex_gr_equal_lengths import (
     ExperimentResourceModel,
     ToyCase,
@@ -24,7 +24,7 @@ from src.experiments.compare_ex_gr_equal_lengths import (
     _quantity_vectors,
     _skyline,
 )
-from src.model.BPC_layer.labeling import LayerSpec
+from src.model.BPC_compartment.labeling import CompartmentSpec
 
 
 Residual = Tuple[float, ...]
@@ -131,12 +131,12 @@ def generate_label_quantity_set(
     return feasible, stats
 
 
-def gurobi_quantity_set(case: ToyCase, layer: LayerSpec) -> set[QuantityKey]:
+def gurobi_quantity_set(case: ToyCase, layer: CompartmentSpec) -> set[QuantityKey]:
     segments = feasibility_check._get_segments_for_layer(layer.car_heights)
     car_types = sorted(case.heights)
     feasible: set[QuantityKey] = set()
     for quantities in _quantity_vectors(car_types, case.max_per_type, case.max_total):
-        result = feasibility_check.check_layer_gurobi(
+        result = feasibility_check.check_compartment_gurobi(
             case.compartment,
             case.deck,
             quantities,
@@ -154,11 +154,11 @@ def run_case(case: ToyCase) -> None:
     feasibility_check._SEGMENTS_CACHE.clear()
 
     car_types = sorted(case.heights)
-    layer = LayerSpec(
-        layer_id=case.name,
+    layer = CompartmentSpec(
+        compartment_id=case.name,
         car_types=car_types,
         car_lengths={car_type: case.equal_length for car_type in car_types},
-        layer_length_limit=10**9,
+        compartment_length_limit=10**9,
         car_heights=case.heights,
         shape_params={"deck": case.deck, "compartment": case.compartment},
         max_quantity_by_type={car_type: case.max_per_type for car_type in car_types},

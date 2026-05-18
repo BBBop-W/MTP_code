@@ -284,7 +284,7 @@ class BBTree:
                     "master_solve_time": self.cg_engine.stats.master_time,
                     "pricing_total_time": self.cg_engine.stats.pricing_time,
                     "labeling_time": self.cg_engine.stats.labeling_time,
-                    "feasibility_check_time": self.cg_engine.stats.bs_time,
+                    "feasibility_check_time": self.cg_engine.stats.feasibility_time,
                     "merge_time": self.cg_engine.stats.merge_time,
                 },
                 f,
@@ -337,7 +337,7 @@ def main() -> None:
         print(f"Master Solve Time  : {solver.cg_engine.stats.master_time:.2f} s")
         print(f"Pricing Total Time : {solver.cg_engine.stats.pricing_time:.2f} s")
         print(f"  ├─ Labeling Time : {solver.cg_engine.stats.labeling_time:.2f} s")
-        print(f"  ├─ Feas Check BS : {solver.cg_engine.stats.bs_time:.2f} s")
+        print(f"  ├─ Exact Feas. : {solver.cg_engine.stats.feasibility_time:.2f} s")
         print(f"  └─ Merging Time  : {solver.cg_engine.stats.merge_time:.2f} s")
 
 if __name__ == "__main__":

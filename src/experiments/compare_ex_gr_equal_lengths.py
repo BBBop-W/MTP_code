@@ -13,8 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_layer.feasibility_check as feasibility_check
-from src.model.BPC_layer.labeling import LayerSpec
+import src.model.BPC_compartment.feasibility_check as feasibility_check
+from src.model.BPC_compartment.labeling import CompartmentSpec
 
 
 Residual = Tuple[float, ...]
@@ -41,7 +41,7 @@ class ExperimentResourceModel:
     delta: float = 400.0
 
 
-def _build_full_resource_model(layer: LayerSpec, interval_profile: str = "full") -> ExperimentResourceModel:
+def _build_full_resource_model(layer: CompartmentSpec, interval_profile: str = "full") -> ExperimentResourceModel:
     """Build all feasible central/left/right choices for the toy experiment."""
 
     mode = layer.shape_params.get("deck", "h-h")
@@ -273,11 +273,11 @@ def run_case(case: ToyCase) -> None:
     feasibility_check._SEGMENTS_CACHE.clear()
 
     car_types = sorted(case.heights)
-    layer = LayerSpec(
-        layer_id=case.name,
+    layer = CompartmentSpec(
+        compartment_id=case.name,
         car_types=car_types,
         car_lengths={car_type: case.equal_length for car_type in car_types},
-        layer_length_limit=10**9,
+        compartment_length_limit=10**9,
         car_heights=case.heights,
         shape_params={"deck": case.deck, "compartment": case.compartment},
         max_quantity_by_type={car_type: case.max_per_type for car_type in car_types},

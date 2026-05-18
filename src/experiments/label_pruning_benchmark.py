@@ -16,15 +16,15 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_layer.feasibility_check as feasibility_check
+import src.model.BPC_compartment.feasibility_check as feasibility_check
 from src.experiments.compare_ex_gr_equal_lengths import (
     ExperimentResourceModel,
     _build_full_resource_model,
     _choice_count_vectors,
     _prune_outer_dominated_choices,
 )
-from src.model.BPC_layer.BBtree import BBTree, normalize_car_table
-from src.model.BPC_layer.labeling import LayerSpec
+from src.model.BPC_compartment.BBtree import BBTree, normalize_car_table
+from src.model.BPC_compartment.labeling import CompartmentSpec
 from src.utility.config import config as Config
 
 
@@ -79,15 +79,15 @@ class BenchStats:
         self.stage_kept = []
 
 
-def _instance_layer(case: LayerBenchCase) -> LayerSpec:
+def _instance_layer(case: LayerBenchCase) -> CompartmentSpec:
     car_info = normalize_car_table(case.instance_dir / "cars.csv")
     car_types = list(range(1, len(car_info) + 1))
-    return LayerSpec(
-        layer_id=f"{case.name}_{case.compartment}_{case.deck}",
+    return CompartmentSpec(
+        compartment_id=f"{case.name}_{case.compartment}_{case.deck}",
         car_types=car_types,
         car_lengths={i: float(car_info.iloc[i - 1]["length"]) for i in car_types},
         car_heights={i: float(car_info.iloc[i - 1]["height"]) for i in car_types},
-        layer_length_limit=Config.top_len if case.compartment == "upper" else Config.bottom_len,
+        compartment_length_limit=Config.top_len if case.compartment == "upper" else Config.bottom_len,
         shape_params={"compartment": case.compartment, "deck": case.deck},
         max_quantity_by_type={
             i: min(
@@ -99,7 +99,7 @@ def _instance_layer(case: LayerBenchCase) -> LayerSpec:
     )
 
 
-def _resource_model(layer: LayerSpec, placement_mode: str) -> ExperimentResourceModel:
+def _resource_model(layer: CompartmentSpec, placement_mode: str) -> ExperimentResourceModel:
     full = _build_full_resource_model(layer, interval_profile="full")
     if placement_mode == "ex":
         return full
@@ -213,7 +213,7 @@ def _quantity_key(car_types: Sequence[int], quantities: Sequence[int]) -> Tuple[
     return tuple((car_type, q) for car_type, q in zip(car_types, quantities) if q > 0)
 
 
-def _generate_residual_labels(layer: LayerSpec, resource_model: ExperimentResourceModel, method: MethodConfig) -> Tuple[List[ResidualLabel], BenchStats]:
+def _generate_residual_labels(layer: CompartmentSpec, resource_model: ExperimentResourceModel, method: MethodConfig) -> Tuple[List[ResidualLabel], BenchStats]:
     car_types = sorted(layer.car_types, key=lambda i: (-float(layer.car_heights.get(i, 0.0)), i))
     root = ResidualLabel(
         stage=0,
@@ -276,7 +276,7 @@ def run_layer_method(case: LayerBenchCase, method: MethodConfig) -> Dict[str, ob
     wall_time = time.perf_counter() - t0
     final_labels = [
         label for label in labels
-        if label.stage == len(layer.car_types) and label.nominal_length <= layer.layer_length_limit + 1e-9
+        if label.stage == len(layer.car_types) and label.nominal_length <= layer.compartment_length_limit + 1e-9
     ]
     keys = {_quantity_key(sorted(layer.car_types, key=lambda i: (-float(layer.car_heights.get(i, 0.0)), i)), label.quantities) for label in final_labels}
     nonempty_keys = {key for key in keys if key}

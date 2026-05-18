@@ -5,7 +5,7 @@ from itertools import combinations
 from math import floor
 from typing import Dict, List, Tuple
 
-from src.model.BPC_wagon.labeling import CutEvaluator, DualValues, LayerSpec
+from src.model.BPC_compartment.labeling import CutEvaluator, DualValues, CompartmentSpec
 
 
 @dataclass(frozen=True)
@@ -46,7 +46,7 @@ class SimpleCutEvaluator(CutEvaluator):
         types = sorted(self.max_total_by_type.keys())
         self.default_triplets: List[Tuple[int, int, int]] = list(combinations(types, 3))
 
-    def is_feasible(self, layer: LayerSpec, quantities: Dict[int, int]) -> bool:
+    def is_feasible(self, compartment_spec: CompartmentSpec, quantities: Dict[int, int]) -> bool:
         for i, q in quantities.items():
             if q < 0:
                 return False
@@ -59,7 +59,7 @@ class SimpleCutEvaluator(CutEvaluator):
 
         return True
 
-    def reduced_cost_shift(self, layer: LayerSpec, quantities: Dict[int, int], duals: DualValues) -> float:
+    def reduced_cost_shift(self, compartment_spec: CompartmentSpec, quantities: Dict[int, int], duals: DualValues) -> float:
         # Reduced cost adjustment:
         #   -sum eta_c - sum sigma_c * floor(0.5 * sum_{i in Ic'} delta_i(r))
         shift = -float(self.cut_state.eta_sum)

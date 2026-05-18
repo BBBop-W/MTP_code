@@ -185,15 +185,15 @@ def build_and_solve(
     )
 
     # Interval capacity generation
-    def get_intervals(layer_prefix, num_blocks):
+    def get_intervals(compartment_prefix, num_blocks):
         intervals = []
         for l in range(num_blocks + 1):
             for r in range(num_blocks + 1):
-                blocks = [f"{layer_prefix}_central"]
+                blocks = [f"{compartment_prefix}_central"]
                 for i in range(1, l + 1):
-                    blocks.append(f"{layer_prefix}_block_{i}_left")
+                    blocks.append(f"{compartment_prefix}_block_{i}_left")
                 for i in range(1, r + 1):
-                    blocks.append(f"{layer_prefix}_block_{i}_right")
+                    blocks.append(f"{compartment_prefix}_block_{i}_right")
                 
                 if l == num_blocks and r == num_blocks:
                     mod = -Delta

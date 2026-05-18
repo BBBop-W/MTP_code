@@ -25,14 +25,10 @@ def run_bpc(
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
 
-    import src.model.BPC_wagon.feasibility_check as feas
-    feas.GLOBAL_NUM_SPLITS = num_splits
-    feas.GLOBAL_INDEP_MODE = independent_mode_split
-    feas._SEGMENTS_CACHE.clear()
-    import src.model.BPC_layer.feasibility_check as layer_feas
-    layer_feas.GLOBAL_NUM_SPLITS = num_splits
-    layer_feas.GLOBAL_INDEP_MODE = independent_mode_split
-    layer_feas._SEGMENTS_CACHE.clear()
+    import src.model.BPC_compartment.feasibility_check as compartment_feas
+    compartment_feas.GLOBAL_NUM_SPLITS = num_splits
+    compartment_feas.GLOBAL_INDEP_MODE = independent_mode_split
+    compartment_feas._SEGMENTS_CACHE.clear()
     
     if use_warmstart:
         # 1. Run C++ VNS Solver
@@ -106,7 +102,7 @@ def run_bpc(
     print(f"Master Solve Time  : {bbtree.cg_engine.stats.master_time:.2f} s")
     print(f"Pricing Total Time : {bbtree.cg_engine.stats.pricing_time:.2f} s")
     print(f"  ├─ Labeling Time : {bbtree.cg_engine.stats.labeling_time:.2f} s")
-    print(f"  ├─ Feas Check BS : {bbtree.cg_engine.stats.bs_time:.2f} s")
+    print(f"  ├─ Exact Feas. : {bbtree.cg_engine.stats.feasibility_time:.2f} s")
     print(f"  └─ Merging Time  : {bbtree.cg_engine.stats.merge_time:.2f} s")
     print("==============================================\n")
 

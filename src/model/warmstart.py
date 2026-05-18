@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
-from src.model.BPC_layer.feasibility_check import HierarchicalBSEvaluator
-from src.model.BPC_layer.labeling import CompartmentSpec
+from src.model.BPC_compartment.feasibility_check import ExactFeasibilityEvaluator
+from src.model.BPC_compartment.labeling import CompartmentSpec
 from src.utility.config import config as Config
 
 
@@ -44,7 +44,7 @@ def load_wagon_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
             continue
         single = WarmstartLoadResult()
         name_map = _build_name_map(master)
-        evaluator = HierarchicalBSEvaluator(compute_reachable_types=False)
+        evaluator = ExactFeasibilityEvaluator(compute_reachable_types=False)
         for idx, carriage in enumerate(data.get("carriage", [])):
             deck = str(carriage.get("position", "h-h")).strip()
             upper, upper_unknown = _quantities_from_names(carriage.get("top", []), name_map)
@@ -53,10 +53,10 @@ def load_wagon_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
             if not upper and not lower:
                 single.skipped_empty += 1
                 continue
-            if not _layer_is_valid(master, evaluator, "upper", deck, upper):
+            if not _compartment_is_valid(master, evaluator, "upper", deck, upper):
                 single.skipped_infeasible += 1
                 continue
-            if not _layer_is_valid(master, evaluator, "lower", deck, lower):
+            if not _compartment_is_valid(master, evaluator, "lower", deck, lower):
                 single.skipped_infeasible += 1
                 continue
             q = {i: upper.get(i, 0) + lower.get(i, 0) for i in master.I}
@@ -83,8 +83,8 @@ def load_wagon_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
     return result
 
 
-def load_layer_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]]) -> WarmstartLoadResult:
-    from src.model.BPC_layer.CG import PatternColumn
+def load_compartment_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]]) -> WarmstartLoadResult:
+    from src.model.BPC_compartment.CG import PatternColumn
 
     result = WarmstartLoadResult()
     seen = {
@@ -97,7 +97,7 @@ def load_layer_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
             continue
         single = WarmstartLoadResult()
         name_map = _build_name_map(master)
-        evaluator = HierarchicalBSEvaluator(compute_reachable_types=False)
+        evaluator = ExactFeasibilityEvaluator(compute_reachable_types=False)
         for idx, carriage in enumerate(data.get("carriage", [])):
             deck = str(carriage.get("position", "h-h")).strip()
             for compartment, key in [("upper", "top"), ("lower", "bottom")]:
@@ -109,7 +109,7 @@ def load_layer_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
                 if any(qty > int(master.U[i]) for i, qty in q.items()):
                     single.skipped_over_limit += 1
                     continue
-                if not _layer_is_valid(master, evaluator, compartment, deck, q):
+                if not _compartment_is_valid(master, evaluator, compartment, deck, q):
                     single.skipped_infeasible += 1
                     continue
                 signature = (compartment, deck, tuple(int(q.get(i, 0)) for i in master.I))
@@ -131,10 +131,6 @@ def load_layer_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]])
         _print_result(json_path, prefix, single, "compartment")
         result += single
     return result
-
-
-def load_compartment_warmstart_columns(master, json_paths: Iterable[Tuple[Path, str]]) -> WarmstartLoadResult:
-    return load_layer_warmstart_columns(master, json_paths)
 
 
 def _load_json(path: Path) -> dict | None:
@@ -170,16 +166,16 @@ def _quantities_from_names(names: List[str], name_map: Dict[str, int]) -> Tuple[
     return quantities, unknown
 
 
-def _layer_is_valid(master, evaluator: HierarchicalBSEvaluator, compartment: str, deck: str, q: Dict[int, int]) -> bool:
+def _compartment_is_valid(master, evaluator: ExactFeasibilityEvaluator, compartment: str, deck: str, q: Dict[int, int]) -> bool:
     if not q:
         return True
     if sum(q.values()) > Config.max_units_per_compartment:
         return False
-    layer = CompartmentSpec(
-        layer_id=f"{compartment}_{deck}",
+    compartment_spec = CompartmentSpec(
+        compartment_id=f"{compartment}_{deck}",
         car_types=master.I,
         car_lengths=master.length,
-        layer_length_limit=Config.top_len if compartment == "upper" else Config.bottom_len,
+        compartment_length_limit=Config.top_len if compartment == "upper" else Config.bottom_len,
         car_heights={i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I},
         shape_params={"compartment": compartment, "deck": deck},
         max_quantity_by_type={
@@ -187,7 +183,7 @@ def _layer_is_valid(master, evaluator: HierarchicalBSEvaluator, compartment: str
             for i in master.I
         },
     )
-    return evaluator.evaluate(layer, q).feasible
+    return evaluator.evaluate(compartment_spec, q).feasible
 
 
 def _print_result(path: Path, prefix: str, result: WarmstartLoadResult, family: str) -> None:

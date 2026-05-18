@@ -6,17 +6,15 @@ from math import floor
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from src.model.BPC_wagon.cuts import CutState, SimpleCutEvaluator
-import src.model.BPC_layer.feasibility_check as layer_feasibility
-from src.model.BPC_layer.feasibility_check import HierarchicalBSEvaluator
-from src.model.BPC_layer.labeling import (
+import src.model.BPC_compartment.feasibility_check as compartment_feasibility
+from src.model.BPC_compartment.labeling import (
     DualValues,
     LabelingOptions,
     LabelingStats,
-    LayerPattern,
-    generate_layer_patterns,
-    generate_layer_patterns_residual,
+    CompartmentPattern,
+    generate_compartment_patterns_residual,
 )
-from src.model.BPC_wagon.layer_specs import LayerRunItem, build_layer_sequence
+from src.model.BPC_wagon.compartment_specs import CompartmentRunItem, build_compartment_sequence
 from src.model.BPC_wagon.CG import MasterLPSolution, MasterProblem, PatternColumn
 from src.model.BPC_wagon.merge import MergedPattern, merge_feasible_patterns
 from src.utility.config import config as Config
@@ -27,7 +25,7 @@ class PricingStats:
     generated_subpatterns: int = 0
     merge_attempt_pairs: int = 0
     labeling_time: float = 0.0
-    bs_time: float = 0.0
+    feasibility_time: float = 0.0
     merge_time: float = 0.0
     labels_feasible: int = 0
     labels_pruned_by_bound: int = 0
@@ -52,12 +50,10 @@ class EarlyStopPricingEngine:
         use_dominance: bool = True,
         use_cuts: bool = False,
         use_rc_bound: bool = False,
-        use_residual_profile: bool = True,
         use_height_order: bool = True,
         use_local_residual_skyline: bool = True,
         residual_profile_mode: str = "full",
         profile_generator_mode: str = "hyb",
-        compute_reachable_types: bool = False,
         num_splits: int = 1,
         independent_mode_split: bool = True,
         max_units_per_type: int = Config.max_units_per_compartment,
@@ -66,17 +62,14 @@ class EarlyStopPricingEngine:
         verbose: bool = True,
         logger: Callable[[str], None] | None = None,
     ) -> None:
-        self.bs = HierarchicalBSEvaluator(compute_reachable_types=compute_reachable_types)
         self.options = LabelingOptions(
             use_dominance=use_dominance,
             use_cuts=use_cuts,
             use_rc_bound=use_rc_bound,
-            use_residual_profile=use_residual_profile,
             use_height_order=use_height_order,
             use_local_residual_skyline=use_local_residual_skyline,
             residual_profile_mode=residual_profile_mode,
             profile_generator_mode=profile_generator_mode,
-            compute_reachable_types=compute_reachable_types,
             max_units_per_type=max_units_per_type,
         )
         self.wagon_capacity_cut = wagon_capacity_cut
@@ -104,9 +97,9 @@ class EarlyStopPricingEngine:
             self._log("Skip pricing because dual gamma is unavailable")
             return []
 
-        layer_feasibility.GLOBAL_NUM_SPLITS = self.num_splits
-        layer_feasibility.GLOBAL_INDEP_MODE = self.independent_mode_split
-        layer_feasibility._SEGMENTS_CACHE.clear()
+        compartment_feasibility.GLOBAL_NUM_SPLITS = self.num_splits
+        compartment_feasibility.GLOBAL_INDEP_MODE = self.independent_mode_split
+        compartment_feasibility._SEGMENTS_CACHE.clear()
 
         self._log(
             f"Start pricing: alpha/beta size={len(lp_solution.dual_alpha)}/{len(lp_solution.dual_beta)}, "
@@ -137,7 +130,7 @@ class EarlyStopPricingEngine:
                 cut_state=CutState(),
             )
 
-        sequence = build_layer_sequence(
+        sequence = build_compartment_sequence(
             car_types=master.I,
             car_lengths=master.length,
             car_heights=car_heights,
@@ -147,7 +140,7 @@ class EarlyStopPricingEngine:
 
         # Reset timers
         self.stats.labeling_time = 0.0
-        self.stats.bs_time = 0.0
+        self.stats.feasibility_time = 0.0
         self.stats.merge_time = 0.0
         self.stats.labels_feasible = 0
         self.stats.labels_pruned_by_bound = 0
@@ -156,25 +149,20 @@ class EarlyStopPricingEngine:
         self.stats.labels_after_dominance = 0
         self.stats.reachability_probes = 0
 
-        subpatterns: Dict[Tuple[str, str], List[LayerPattern]] = {}
+        subpatterns: Dict[Tuple[str, str], List[CompartmentPattern]] = {}
         merged_candidates: List[MergedPattern] = []
         for item in sequence:
-            self._log(f"Solve subproblem: deck={item.deck}, compartment={item.compartment}, layer={item.layer.layer_id}")
+            self._log(f"Solve subproblem: deck={item.deck}, compartment={item.compartment}, compartment_spec={item.compartment_spec.compartment_id}")
             
             t0 = time.time()
             lab_stats = LabelingStats()
-            patterns = self._generate_aligned_layer_patterns(item, duals, cut_evaluator, lab_stats)
+            patterns = self._generate_aligned_compartment_patterns(item, duals, cut_evaluator, lab_stats)
             t_lab = time.time() - t0
             self.stats.labeling_time += t_lab
             self._accumulate_labeling_stats(lab_stats)
             
-            # Extract BS time collected inside HierarchicalBSEvaluator
-            self.stats.bs_time += self.bs.accumulated_time
-            self.stats.labeling_time -= self.bs.accumulated_time # Remove BS time from pure labeling time
-            self.bs.accumulated_time = 0.0 # reset
-
             self.stats.generated_subpatterns += len(patterns)
-            self._log(f"Subproblem done: layer={item.layer.layer_id}, patterns={len(patterns)}")
+            self._log(f"Subproblem done: compartment_spec={item.compartment_spec.compartment_id}, patterns={len(patterns)}")
             subpatterns[(item.deck, item.compartment)] = patterns
 
             # Merge right after a pair is available.
@@ -217,28 +205,19 @@ class EarlyStopPricingEngine:
         self._log(f"Merging success: columns={len(columns)}, best_rc={sorted_candidates[0].reduced_cost:.6f}")
         return columns
 
-    def _generate_aligned_layer_patterns(
+    def _generate_aligned_compartment_patterns(
         self,
-        item: LayerRunItem,
+        item: CompartmentRunItem,
         duals: DualValues,
         cut_evaluator: SimpleCutEvaluator | None,
         lab_stats: LabelingStats,
-    ) -> List[LayerPattern]:
+    ) -> List[CompartmentPattern]:
         options = self.options
         if self._dominance_support_types and options.use_dominance:
             options = replace(options, dominance_support_types=self._dominance_support_types)
-        if options.use_residual_profile:
-            return generate_layer_patterns_residual(
-                layer=item.layer,
-                duals=duals,
-                options=options,
-                cut_evaluator=cut_evaluator,
-                stats=lab_stats,
-            )
-        return generate_layer_patterns(
-            layer=item.layer,
+        return generate_compartment_patterns_residual(
+            compartment_spec=item.compartment_spec,
             duals=duals,
-            bs=self.bs,
             options=options,
             cut_evaluator=cut_evaluator,
             stats=lab_stats,
@@ -255,8 +234,8 @@ class EarlyStopPricingEngine:
     def _try_merge_pair(
         self,
         deck: str,
-        upper_patterns: List[LayerPattern],
-        lower_patterns: List[LayerPattern],
+        upper_patterns: List[CompartmentPattern],
+        lower_patterns: List[CompartmentPattern],
         max_total_by_type: Dict[int, int],
         lp_solution: MasterLPSolution,
         master: MasterProblem,
@@ -323,7 +302,7 @@ class EarlyStopPricingEngine:
                 "source": "pricing_label_merge",
                 "deck": merged.deck,
                 "reduced_cost": f"{merged.reduced_cost:.6f}",
-                "upper": merged.upper.layer_id,
-                "lower": merged.lower.layer_id,
+                "upper": merged.upper.compartment_id,
+                "lower": merged.lower.compartment_id,
             },
         )
