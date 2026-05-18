@@ -1,0 +1,44 @@
+\paragraph{Common notation.}
+Let \(M_i=D_i+C_i\), \(N\) be the maximum number of automobiles in one layer, and \(\Delta\) be the spacing length.  The DW master is written as a minimization master with column cost \(-\sum_i \bar l_i q_i\).  Let \(\alpha_i,\beta_i\) be the master duals of the mandatory and optional constraints, and let \(\psi_i,\phi_i\) be the active branch duals for \(q_i\) and \(a_i\).  Define
+\[
+c_i=\bar l_i+\alpha_i+\beta_i+\psi_i .
+\]
+
+\paragraph{Wagon pricing subproblem.}
+For one full-wagon column, \(x_i^h\) is the number of type-\(i\) automobiles assigned to wagon component \(h\), \(z^p\) selects one deck position, \(q_i=\sum_h x_i^h\), and \(a_i\) indicates whether type \(i\) appears in the wagon.  Let \(\gamma\) be the wagon-count dual.
+\begin{align}
+\min \quad & -\gamma-\sum_{i\in\mathcal I} c_i q_i-\sum_{i\in\mathcal I}\phi_i a_i \\
+\text{s.t.}\quad & q_i=\sum_{h\in\mathcal H}x_i^h, &&\forall i\in\mathcal I,\\
+& q_i\le M_i, &&\forall i\in\mathcal I,\\
+& q_i\le 2N a_i, &&\forall i\in\mathcal I,\\
+& q_i\ge a_i, &&\forall i\in\mathcal I,\\
+& \sum_{p\in\mathcal P}z^p=1,\\
+& \sum_{i\in\mathcal I}\sum_{h\in U}(\bar l_i+\Delta)x_i^h\le L_U, &&\forall U\in\mathcal U^{\mathrm{low}}\cup\mathcal U^{\mathrm{up}},\\
+& x_i^h\le N\sum_{p\in\mathcal P}\eta_i^{hp}z^p, &&\forall i\in\mathcal I,\;h\in\mathcal H,\\
+& \sum_{i\in\mathcal I}\sum_{h\in\mathcal H^g}x_i^h\le N, &&\forall g\in\{\mathrm{low},\mathrm{up}\},\\
+& x_i^h\in\mathbb Z_+, &&\forall i\in\mathcal I,\;h\in\mathcal H,\\
+& q_i\in\mathbb Z_+,\;a_i\in\{0,1\}, &&\forall i\in\mathcal I,\\
+& z^p\in\{0,1\}, &&\forall p\in\mathcal P.
+\end{align}
+
+\paragraph{Layer pricing subproblem.}
+For the layer master, one pricing problem is solved for each fixed layer \(g\in\{\mathrm{low},\mathrm{up}\}\) and deck position \(p\in\mathcal P\).  Let \(\lambda_p\) be the deck-map equality dual and \(\kappa\) be the total-wagon dual.  The constant term is
+\[
+\delta_{gp}=
+\begin{cases}
+-(\lambda_p+\kappa), & g=\mathrm{up},\\
+\lambda_p, & g=\mathrm{low}.
+\end{cases}
+\]
+\begin{align}
+\min \quad & \delta_{gp}-\sum_{i\in\mathcal I} c_i q_i-\sum_{i\in\mathcal I}\phi_i a_i \\
+\text{s.t.}\quad & q_i=\sum_{h\in\mathcal H^g}x_i^h, &&\forall i\in\mathcal I,\\
+& q_i\le M_i, &&\forall i\in\mathcal I,\\
+& q_i\le N a_i, &&\forall i\in\mathcal I,\\
+& q_i\ge a_i, &&\forall i\in\mathcal I,\\
+& \sum_{i\in\mathcal I}\sum_{h\in U}(\bar l_i+\Delta)x_i^h\le L_U^g, &&\forall U\in\mathcal U^g,\\
+& x_i^h\le N\eta_i^{hp}, &&\forall i\in\mathcal I,\;h\in\mathcal H^g,\\
+& \sum_{i\in\mathcal I}\sum_{h\in\mathcal H^g}x_i^h\le N,\\
+& x_i^h\in\mathbb Z_+, &&\forall i\in\mathcal I,\;h\in\mathcal H^g,\\
+& q_i\in\mathbb Z_+,\;a_i\in\{0,1\}, &&\forall i\in\mathcal I.
+\end{align}

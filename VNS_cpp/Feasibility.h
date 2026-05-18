@@ -85,8 +85,10 @@ private:
         std::vector<double> sel_h;
         if (num_splits > 0 && num_splits < h_vec.size()) {
             for (int i=0; i<num_splits; ++i) {
-                int idx = std::round(i * (h_vec.size() - 1.0) / std::max(1, num_splits - 1));
-                if (num_splits == 1) idx = (h_vec.size() - 1) / 2; // match linspace 0 behavior for size 1
+                double raw_idx = (num_splits == 1)
+                    ? 0.0
+                    : i * (h_vec.size() - 1.0) / (num_splits - 1);
+                int idx = static_cast<int>(raw_idx);
                 sel_h.push_back(h_vec[idx]);
             }
         } else {
@@ -185,7 +187,7 @@ inline bool dfs_check(int car_idx, const std::vector<std::vector<std::vector<int
 
 inline bool IsFeasible_Floor(const std::vector<int>& route, Problem* p, int mode_left, int mode_right, int floor, int spacing) {
     if (route.empty()) return true;
-    if (route.size() > 8) return false;
+    if (route.size() > Config::max_units_per_compartment) return false;
     
     GLOBAL_GEOM.init(p);
     

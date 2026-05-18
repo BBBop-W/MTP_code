@@ -7,6 +7,7 @@ class Config:
     eps = 0.0001
 
     timelimit = 30
+    max_units_per_compartment = 10
     bottom_length = 24700.0
     top_length = 24900.0
 

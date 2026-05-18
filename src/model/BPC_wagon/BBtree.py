@@ -17,8 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC.CG import MasterLPSolution, MasterProblem, PatternColumn, ColumnGenerationEngine
-from src.model.BPC.pricing import EarlyStopPricingEngine
+from src.model.BPC_wagon.CG import MasterLPSolution, MasterProblem, PatternColumn, ColumnGenerationEngine
+from src.model.BPC_wagon.pricing import EarlyStopPricingEngine
+from src.model.BPC_wagon.solver_pricing import SolverPricingEngine
 from src.utility.config import config as Config
 
 # IDE debug switches.
@@ -42,6 +43,7 @@ class BBNode:
     depth: int
     branch_a_bounds: Dict[int, Tuple[float | None, float | None]] = field(default_factory=dict)
     branch_q_bounds: Dict[int, Tuple[float | None, float | None]] = field(default_factory=dict)
+    lower_bound: float = -math.inf
 
 @dataclass
 class BPCResult:
@@ -49,6 +51,8 @@ class BPCResult:
     best_theta: Dict[str, float] | None
     explored_nodes: int
     generated_columns: int
+    best_bound: float | None = None
+    gap: float | None = None
 
 def normalize_car_table(cars_path: Path) -> pd.DataFrame:
     car_info = pd.read_csv(cars_path)
@@ -85,6 +89,9 @@ class BBTree:
         log_to_console: bool = True,
         use_dominance: bool = True,
         use_cuts: bool = False,
+        pricing_method: str = "merging",
+        num_splits: int = 1,
+        independent_mode_split: bool = True,
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
     ) -> None:
@@ -103,11 +110,24 @@ class BBTree:
         self.master = MasterProblem(car_info=car_info, carriage_num=carriage_num)
         self.master.seed_initial_columns()
 
-        self.pricing_engine = EarlyStopPricingEngine(
-            use_dominance=use_dominance,
-            use_cuts=use_cuts,
-            verbose=print_subproblem_progress,
-        )
+        self.pricing_method = pricing_method.lower().strip()
+        if self.pricing_method == "merging":
+            self.pricing_engine = EarlyStopPricingEngine(
+                use_dominance=use_dominance,
+                use_cuts=use_cuts,
+                num_splits=num_splits,
+                independent_mode_split=independent_mode_split,
+                verbose=print_subproblem_progress,
+            )
+        elif self.pricing_method == "solver":
+            self.pricing_engine = SolverPricingEngine(
+                num_splits=num_splits,
+                independent_mode_split=independent_mode_split,
+                max_units_per_compartment=Config.max_units_per_compartment,
+                verbose=print_subproblem_progress,
+            )
+        else:
+            raise ValueError("pricing_method must be 'merging' or 'solver'")
         self.cg_engine = ColumnGenerationEngine(
             master=self.master,
             pricing_engine=self.pricing_engine,
@@ -170,6 +190,26 @@ class BBTree:
             branch_var = self.master.choose_branch_var(lp_solution)
             if branch_var is None:
                 continue
+
+            if branch_var[0] == "a":
+                t0 = time.time()
+                ip_solution = self.master.solve_restricted_ip(
+                    branch_a_bounds=node.branch_a_bounds,
+                    branch_q_bounds=node.branch_q_bounds,
+                    time_limit=Config.timelimit,
+                    log_to_console=False,
+                )
+                self.cg_engine.stats.master_time += time.time() - t0
+                if ip_solution.objective is not None:
+                    if self.best_obj is None or ip_solution.objective < self.best_obj:
+                        self.best_obj = ip_solution.objective
+                        self.best_theta = {
+                            k: round(v)
+                            for k, v in ip_solution.theta_values.items()
+                            if abs(v) > 1e-5
+                        }
+                    if ip_solution.objective <= current_bound + 1e-6:
+                        continue
                 
             b_type, car_type, value = branch_var
             floor_v = math.floor(value)
@@ -192,15 +232,36 @@ class BBTree:
                 right_q[car_type] = (ceil_v, old_right[1])
 
             node_counter += 1
-            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_a_bounds=left_a, branch_q_bounds=left_q))
+            queue.append(
+                BBNode(
+                    node_id=node_counter,
+                    depth=node.depth + 1,
+                    branch_a_bounds=left_a,
+                    branch_q_bounds=left_q,
+                    lower_bound=current_bound,
+                )
+            )
             node_counter += 1
-            queue.append(BBNode(node_id=node_counter, depth=node.depth + 1, branch_a_bounds=right_a, branch_q_bounds=right_q))
+            queue.append(
+                BBNode(
+                    node_id=node_counter,
+                    depth=node.depth + 1,
+                    branch_a_bounds=right_a,
+                    branch_q_bounds=right_q,
+                    lower_bound=current_bound,
+                )
+            )
+
+        best_bound = self._final_bound(queue)
+        final_gap = self._gap(self.best_obj, best_bound)
 
         result = BPCResult(
             best_objective=self.best_obj,
             best_theta=self.best_theta,
             explored_nodes=explored,
             generated_columns=self.cg_engine.generated_columns,
+            best_bound=best_bound,
+            gap=final_gap,
         )
 
         with open(self.output_dir / "bb_summary.json", "w", encoding="utf-8") as f:
@@ -210,7 +271,10 @@ class BBTree:
                     "best_theta": result.best_theta,
                     "explored_nodes": result.explored_nodes,
                     "generated_columns": result.generated_columns,
+                    "best_bound": result.best_bound,
+                    "gap": result.gap,
                     "total_columns_in_pool": len(self.master.columns),
+                    "pricing_method": self.pricing_method,
                     "master_solve_time": self.cg_engine.stats.master_time,
                     "pricing_total_time": self.cg_engine.stats.pricing_time,
                     "labeling_time": self.cg_engine.stats.labeling_time,
@@ -223,6 +287,22 @@ class BBTree:
             )
 
         return result
+
+    def _final_bound(self, queue: deque[BBNode]) -> float | None:
+        if self.best_obj is None:
+            return None
+        if not queue:
+            return self.best_obj
+        finite_bounds = [node.lower_bound for node in queue if node.lower_bound != -math.inf]
+        if not finite_bounds:
+            return None
+        return min(self.best_obj, min(finite_bounds))
+
+    @staticmethod
+    def _gap(best_obj: float | None, best_bound: float | None) -> float | None:
+        if best_obj is None or best_bound is None:
+            return None
+        return max(0.0, best_obj - best_bound) / (abs(best_obj) + 1e-10)
 
 def main() -> None:
     solver = BBTree(

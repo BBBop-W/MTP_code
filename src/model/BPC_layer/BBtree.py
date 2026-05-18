@@ -17,8 +17,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from src.utility.config import config as Config
 
-from src.model.BPC_LayerMaster.CG import ColumnGenerationEngine, MasterProblem
-from src.model.BPC_LayerMaster.pricing import EarlyStopPricingEngine
+from src.model.BPC_layer.CG import ColumnGenerationEngine, MasterProblem
+from src.model.BPC_layer.pricing import EarlyStopPricingEngine
+from src.model.BPC_layer.solver_pricing import SolverPricingEngine
 
 @dataclass
 class BPCResult:
@@ -26,6 +27,8 @@ class BPCResult:
     best_theta: Dict[str, float] | None
     explored_nodes: int
     generated_columns: int
+    best_bound: float | None = None
+    gap: float | None = None
 
 def normalize_car_table(cars_path: Path) -> pd.DataFrame:
     car_info = pd.read_csv(cars_path)
@@ -68,6 +71,7 @@ class BBTree:
         log_to_console: bool = True,
         use_dominance: bool = True,
         use_cuts: bool = False,
+        pricing_method: str = "labeling",
         use_rc_bound: bool = True,
         use_residual_profile: bool = True,
         use_outer_inner_profile: bool = False,
@@ -91,7 +95,7 @@ class BBTree:
         self.max_nodes = max_nodes
         self.log_to_console = log_to_console
         self.print_bb_progress = print_bb_progress
-        self.mip_gap_tol = Config.gap
+        self.mip_gap_tol = float(mip_gap_tol)
 
         self.master = MasterProblem(
             car_info=self.car_info,
@@ -99,18 +103,27 @@ class BBTree:
         )
         self.master.seed_initial_columns()
 
-        pricing_engine = EarlyStopPricingEngine(
-            use_dominance=use_dominance,
-            use_cuts=use_cuts,
-            use_rc_bound=use_rc_bound,
-            use_residual_profile=use_residual_profile,
-            use_outer_inner_profile=use_outer_inner_profile,
-            use_height_order=use_height_order,
-            use_local_residual_skyline=use_local_residual_skyline,
-            residual_profile_mode=residual_profile_mode,
-            compute_reachable_types=compute_reachable_types,
-            verbose=print_subproblem_progress,
-        )
+        self.pricing_method = pricing_method.lower().strip()
+        if self.pricing_method == "labeling":
+            pricing_engine = EarlyStopPricingEngine(
+                use_dominance=use_dominance,
+                use_cuts=use_cuts,
+                use_rc_bound=use_rc_bound,
+                use_residual_profile=use_residual_profile,
+                use_outer_inner_profile=use_outer_inner_profile,
+                use_height_order=use_height_order,
+                use_local_residual_skyline=use_local_residual_skyline,
+                residual_profile_mode=residual_profile_mode,
+                compute_reachable_types=compute_reachable_types,
+                verbose=print_subproblem_progress,
+            )
+        elif self.pricing_method == "solver":
+            pricing_engine = SolverPricingEngine(
+                max_units_per_type=Config.max_units_per_compartment,
+                verbose=print_subproblem_progress,
+            )
+        else:
+            raise ValueError("pricing_method must be 'labeling' or 'solver'")
         
         self.cg_engine = ColumnGenerationEngine(
             master=self.master,
@@ -146,8 +159,7 @@ class BBTree:
 
             # Check gap before processing
             if self.best_obj is not None and self.global_lb != -math.inf:
-                # GAP = |UB - LB| / |UB|
-                gap = abs(self.best_obj - self.global_lb) / (abs(self.best_obj) + 1e-10)
+                gap = self._gap(self.best_obj, self.global_lb)
                 if gap <= self.mip_gap_tol:
                     if self.print_bb_progress:
                         print(f"[BB] Target MIP Gap reached: {gap:.4%} <= {self.mip_gap_tol:.4%}")
@@ -177,7 +189,7 @@ class BBTree:
             def format_gap(best: float | None, lb: float) -> str:
                 if best is None or lb == -math.inf:
                     return "-"
-                g = abs(best - lb) / (abs(best) + 1e-10)
+                g = self._gap(best, lb)
                 return f"{g:.2%}"
             
             # Node bounding
@@ -205,7 +217,7 @@ class BBTree:
                     
                     # Re-check global gap after finding new best
                     if self.global_lb != -math.inf:
-                        gap = abs(self.best_obj - self.global_lb) / (abs(self.best_obj) + 1e-10)
+                        gap = self._gap(self.best_obj, self.global_lb)
                         if gap <= self.mip_gap_tol:
                             if self.print_bb_progress:
                                 print(f"[BB] Target MIP Gap reached upon finding new incumbent: {gap:.4%} <= {self.mip_gap_tol:.4%}")
@@ -214,8 +226,31 @@ class BBTree:
 
             branch_var = self.master.choose_branch_var(lp_solution)
             if branch_var is None:
+                ip_solution = self.master.solve_restricted_ip(
+                    branch_q_bounds=node.branch_q_bounds,
+                    time_limit=Config.timelimit,
+                    log_to_console=False,
+                )
+                if (
+                    ip_solution.objective is not None
+                    and not self.master.has_unmet_demand(ip_solution)
+                    and (self.best_obj is None or ip_solution.objective < self.best_obj)
+                ):
+                    self.best_obj = ip_solution.objective
+                    self.best_theta = {k: round(v) for k, v in ip_solution.theta_values.items()}
+                if (
+                    ip_solution.objective is not None
+                    and ip_solution.objective <= current_bound + 1e-6
+                ):
+                    continue
+                if self.print_bb_progress:
+                    frac_count = len(self.master.fractional_theta_values(lp_solution))
+                    print(
+                        f"[BB] Fractional theta remains without q-branch candidate: "
+                        f"frac_theta={frac_count}, lp={current_bound:.6f}, "
+                        f"restricted_ip={ip_solution.objective}"
+                    )
                 continue
-                
             b_type, car_type, value = branch_var
             floor_v = math.floor(value)
             ceil_v = math.ceil(value)
@@ -238,10 +273,32 @@ class BBTree:
             right_node.lower_bound = current_bound
             queue.append(right_node)
 
+        best_bound = self._final_bound(queue)
+        final_gap = self._gap(self.best_obj, best_bound)
         result = BPCResult(
             best_objective=self.best_obj,
             best_theta=self.best_theta,
             explored_nodes=explored,
             generated_columns=self.cg_engine.generated_columns,
+            best_bound=best_bound,
+            gap=final_gap,
         )
         return result
+
+    def _final_bound(self, queue: deque[BBNode]) -> float | None:
+        if self.best_obj is None:
+            return None
+        if not queue:
+            return self.best_obj
+        finite_open_bounds = [node.lower_bound for node in queue if node.lower_bound != -math.inf]
+        if finite_open_bounds:
+            return min(self.best_obj, max(self.global_lb, min(finite_open_bounds)))
+        if self.global_lb != -math.inf:
+            return min(self.best_obj, self.global_lb)
+        return None
+
+    @staticmethod
+    def _gap(best_obj: float | None, best_bound: float | None) -> float | None:
+        if best_obj is None or best_bound is None:
+            return None
+        return max(0.0, best_obj - best_bound) / (abs(best_obj) + 1e-10)

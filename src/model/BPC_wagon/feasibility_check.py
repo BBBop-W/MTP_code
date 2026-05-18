@@ -19,7 +19,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from src.utility.config import config as Config
 
 if TYPE_CHECKING:
-    from src.model.BPC.labeling import BSResult, LayerSpec
+    from src.model.BPC_wagon.labeling import BSResult, LayerSpec
 
 _SEGMENTS_CACHE = {}
 GLOBAL_NUM_SPLITS = 1
@@ -40,7 +40,7 @@ def _recurse_check_layer_bs(
     if not cars:
         return 0.0
 
-    if len(cars) > 8:
+    if len(cars) > Config.max_units_per_compartment:
         return None
 
     mode_left = deck_mode.split("-")[0]
@@ -206,7 +206,7 @@ def _simple_check_layer_bs(
         return 0.0
 
     # 限制车辆数量以保证 2^N 搜索极快
-    if len(cars) > 8:
+    if len(cars) > Config.max_units_per_compartment:
         return None
 
     if "-" in deck_mode:
@@ -369,7 +369,7 @@ def dynamic_recursive_bs(
 
     if not cars:
         return 0.0
-    if len(cars) > 8:
+    if len(cars) > Config.max_units_per_compartment:
         return None
 
     cars.sort(key=lambda c: car_heights[c], reverse=True)
@@ -436,12 +436,6 @@ def dynamic_recursive_bs(
     intervals = []
     for l_idx in range(n_blocks + 1):
         for r_idx in range(n_blocks + 1):
-            if compartment == "upper":
-                enforce_left = (l_idx == n_blocks) or (pi_left == 1)
-                enforce_right = (r_idx == n_blocks) or (pi_right == 1)
-                if not (enforce_left and enforce_right):
-                    continue
-
             if l_idx == n_blocks and r_idx == n_blocks:
                 mod = -delta
             elif l_idx == n_blocks or r_idx == n_blocks:
@@ -512,7 +506,7 @@ def _simple_check_layer_bs(
 
 
 class HierarchicalBSEvaluator:
-    """Simplified 2^N Search Evaluator for maximum 8 cars.
+    """Simplified search evaluator capped by Config.max_units_per_compartment.
     Wrapper to match the labeling.py API logic.
     """
     def __init__(self):
@@ -520,7 +514,7 @@ class HierarchicalBSEvaluator:
         self._cache = {}
 
     def evaluate(self, layer: 'LayerSpec', quantities: Dict[int, int]) -> 'BSResult':
-        from src.model.BPC.labeling import BSResult
+        from src.model.BPC_wagon.labeling import BSResult
         import time
         t0 = time.time()
         
@@ -547,7 +541,7 @@ class HierarchicalBSEvaluator:
             # Check reachable types (one-step extension)
             reachable = set()
             for t in layer.car_types:
-                max_q = int(layer.max_quantity_by_type.get(t, 6))
+                max_q = int(layer.max_quantity_by_type.get(t, Config.max_units_per_compartment))
                 if clean_q.get(t, 0) >= max_q:
                     continue
                 probe = dict(clean_q)
@@ -601,6 +595,7 @@ def check_layer_gurobi(
 ) -> float | None:
     model = gp.Model("single_layer_check")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
     
     I = [i for i, q in quantities.items() if q > 0]
     if not I:
@@ -703,6 +698,7 @@ def check_layer_gurobi(
 ) -> float | None:
     model = gp.Model("single_layer_check_dynamic")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
 
     i_list = [i for i, q in quantities.items() if q > 0]
     if not i_list:
@@ -751,12 +747,6 @@ def check_layer_gurobi(
     delta = 400.0
     for l_idx in range(n_blocks + 1):
         for r_idx in range(n_blocks + 1):
-            if compartment == "upper":
-                enforce_left = (l_idx == n_blocks) or (pi_left == 1)
-                enforce_right = (r_idx == n_blocks) or (pi_right == 1)
-                if not (enforce_left and enforce_right):
-                    continue
-
             if l_idx == n_blocks and r_idx == n_blocks:
                 mod = -delta
             elif l_idx == n_blocks or r_idx == n_blocks:

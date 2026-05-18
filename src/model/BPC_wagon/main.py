@@ -11,8 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC.BBtree import BBTree, normalize_car_table
-from src.model.BPC.CG import PatternColumn
+from src.model.BPC_wagon.BBtree import BBTree, normalize_car_table
+from src.model.BPC_wagon.CG import PatternColumn
 
 def load_vns_columns(master, csv_path: Path, prefix: str):
     """
@@ -72,14 +72,24 @@ def load_vns_columns(master, csv_path: Path, prefix: str):
     print(f"Loaded {added_count} columns from {csv_path.name} ({prefix})")
 
 
-def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1, independent_mode_split: bool = True):
+def run_bpc(
+    instance_name: str,
+    use_warmstart: bool = True,
+    num_splits: int = 1,
+    independent_mode_split: bool = True,
+    pricing_method: str = "merging",
+):
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
 
-    import src.model.BPC.feasibility_check as feas
+    import src.model.BPC_wagon.feasibility_check as feas
     feas.GLOBAL_NUM_SPLITS = num_splits
     feas.GLOBAL_INDEP_MODE = independent_mode_split
     feas._SEGMENTS_CACHE.clear()
+    import src.model.BPC_layer.feasibility_check as layer_feas
+    layer_feas.GLOBAL_NUM_SPLITS = num_splits
+    layer_feas.GLOBAL_INDEP_MODE = independent_mode_split
+    layer_feas._SEGMENTS_CACHE.clear()
     
     if use_warmstart:
         # 1. Run C++ VNS Solver
@@ -109,7 +119,10 @@ def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1,
         max_cg_iters=3000,
         log_to_console=False,
         use_dominance=True,
-        use_cuts=True,
+        use_cuts=False,
+        pricing_method=pricing_method,
+        num_splits=num_splits,
+        independent_mode_split=independent_mode_split,
         print_bb_progress=True,
         print_subproblem_progress=False
     )
@@ -136,6 +149,7 @@ def run_bpc(instance_name: str, use_warmstart: bool = True, num_splits: int = 1,
     print("           BPC Execution Summary              ")
     print("==============================================")
     print(f"Instance           : {instance_name}")
+    print(f"Pricing Method     : {pricing_method}")
     print(f"Explored Nodes     : {result.explored_nodes}")
     print(f"Generated Columns  : {result.generated_columns}")
     if result.best_objective is not None:
@@ -172,8 +186,19 @@ if __name__ == "__main__":
             independent_mode_split = args[3].lower() not in ['false', '0', 'no', 'off']
         else:
             independent_mode_split = True
+        if len(args) > 4:
+            pricing_method = args[4].lower()
+        else:
+            pricing_method = "merging"
     else:
         num_splits = 1
         independent_mode_split = True
+        pricing_method = "merging"
 
-    run_bpc(target_instance, use_warmstart=use_ws, num_splits=num_splits, independent_mode_split=independent_mode_split)
+    run_bpc(
+        target_instance,
+        use_warmstart=use_ws,
+        num_splits=num_splits,
+        independent_mode_split=independent_mode_split,
+        pricing_method=pricing_method,
+    )

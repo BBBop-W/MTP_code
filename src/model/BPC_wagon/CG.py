@@ -36,6 +36,13 @@ class MasterLPSolution:
     dual_branch_q: Dict[int, float] = field(default_factory=dict)
     dual_eta: float = 0.0
     dual_sigma: Dict[Tuple[int, int, int], float] = field(default_factory=dict)
+
+
+@dataclass
+class MasterIPSolution:
+    status: int
+    objective: float | None
+    theta_values: Dict[str, float]
     
 @dataclass
 class CGStats:
@@ -45,6 +52,8 @@ class CGStats:
     labeling_time: float = 0.0
     bs_time: float = 0.0
     merge_time: float = 0.0
+    solver_time: float = 0.0
+    solver_nodes: float = 0.0
 
 class MasterProblem:
     """Restricted master problem (set covering form) for MLP-IC."""
@@ -95,6 +104,7 @@ class MasterProblem:
 
         model = gp.Model("mlp_ic_master")
         model.Params.OutputFlag = 1 if log_to_console else 0
+        Config.apply_gurobi_params(model)
         if time_limit is not None:
             model.Params.TimeLimit = float(time_limit)
 
@@ -240,6 +250,69 @@ class MasterProblem:
                 return 'q', i, q_sums[i]
 
         return None
+
+    def solve_restricted_ip(
+        self,
+        branch_a_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
+        branch_q_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
+        time_limit: float | None = None,
+        log_to_console: bool = False,
+    ) -> MasterIPSolution:
+        branch_a_bounds = branch_a_bounds or {}
+        branch_q_bounds = branch_q_bounds or {}
+
+        model = gp.Model("mlp_ic_master_ip")
+        model.Params.OutputFlag = 1 if log_to_console else 0
+        Config.apply_gurobi_params(model)
+        if time_limit is not None:
+            model.Params.TimeLimit = float(time_limit)
+
+        theta = {
+            col_id: model.addVar(lb=0.0, ub=gp.GRB.INFINITY, vtype=gp.GRB.INTEGER, obj=col.cost, name=f"theta[{col_id}]")
+            for col_id, col in self.columns.items()
+        }
+        unmet = {
+            i: model.addVar(lb=0.0, vtype=gp.GRB.CONTINUOUS, obj=self.penalty_unmet, name=f"unmet[{i}]")
+            for i in self.I
+        }
+
+        for i in self.I:
+            model.addConstr(
+                gp.quicksum(self.columns[cid].q.get(i, 0) * theta[cid] for cid in self.columns) + unmet[i] >= self.D[i],
+                name=f"mandatory[{i}]",
+            )
+            model.addConstr(
+                gp.quicksum(self.columns[cid].q.get(i, 0) * theta[cid] for cid in self.columns) <= self.U[i],
+                name=f"optional[{i}]",
+            )
+
+        model.addConstr(gp.quicksum(theta[cid] for cid in self.columns) <= self.carriage_num, name="wagon_limit")
+
+        for i, (lb, ub) in branch_a_bounds.items():
+            expr = gp.quicksum((1 if self.columns[cid].q.get(i, 0) > 0 else 0) * theta[cid] for cid in self.columns)
+            if lb is not None:
+                model.addConstr(expr >= lb, name=f"branch_a_lb_{i}")
+            if ub is not None:
+                model.addConstr(expr <= ub, name=f"branch_a_ub_{i}")
+
+        for i, (lb, ub) in branch_q_bounds.items():
+            expr = gp.quicksum(self.columns[cid].q.get(i, 0) * theta[cid] for cid in self.columns)
+            if lb is not None:
+                model.addConstr(expr >= lb, name=f"branch_q_lb_{i}")
+            if ub is not None:
+                model.addConstr(expr <= ub, name=f"branch_q_ub_{i}")
+
+        model.ModelSense = gp.GRB.MINIMIZE
+        model.optimize()
+
+        if model.Status not in {gp.GRB.OPTIMAL, gp.GRB.SUBOPTIMAL, gp.GRB.TIME_LIMIT}:
+            return MasterIPSolution(status=model.Status, objective=None, theta_values={})
+        return MasterIPSolution(
+            status=model.Status,
+            objective=float(model.ObjVal),
+            theta_values={cid: float(theta[cid].X) for cid in self.columns},
+        )
+
     def is_integral(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         if not solution.theta_values:
             return True
@@ -292,11 +365,17 @@ class ColumnGenerationEngine:
             self.stats.labeling_time += self.pricing_engine.stats.labeling_time
             self.stats.bs_time += self.pricing_engine.stats.bs_time
             self.stats.merge_time += self.pricing_engine.stats.merge_time
+            self.stats.solver_time += getattr(self.pricing_engine.stats, "solver_time", 0.0)
+            self.stats.solver_nodes += getattr(self.pricing_engine.stats, "solver_nodes", 0.0)
             
             # Reset pricing engine stats for next iteration to avoid double counting
             self.pricing_engine.stats.labeling_time = 0.0
             self.pricing_engine.stats.bs_time = 0.0
             self.pricing_engine.stats.merge_time = 0.0
+            if hasattr(self.pricing_engine.stats, "solver_time"):
+                self.pricing_engine.stats.solver_time = 0.0
+            if hasattr(self.pricing_engine.stats, "solver_nodes"):
+                self.pricing_engine.stats.solver_nodes = 0.0
 
             if not new_columns:
                 if self.pricing_engine.options.use_cuts:
@@ -353,7 +432,7 @@ class ColumnGenerationEngine:
         return last_solution
 
 if __name__ == "__main__":
-    from src.model.BPC.pricing import EarlyStopPricingEngine
+    from src.model.BPC_wagon.pricing import EarlyStopPricingEngine
 
     print("--- Testing Column Generation (Root Node) ---")
     instance_dir = PROJECT_ROOT / "data/Instance/m10c10"

@@ -16,8 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_LayerMaster.feasibility_check as feasibility_check
-from src.model.BPC_LayerMaster.BBtree import BBTree
+import src.model.BPC_layer.feasibility_check as feasibility_check
+from src.model.BPC_layer.BBtree import BBTree
 from src.model.gurobi import build_and_solve
 
 

@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import src.model.BPC_LayerMaster.feasibility_check as feasibility_check
+import src.model.BPC_layer.feasibility_check as feasibility_check
 from src.experiments.compare_ex_gr_equal_lengths import (
     ExperimentResourceModel,
     ToyCase,
@@ -24,7 +24,7 @@ from src.experiments.compare_ex_gr_equal_lengths import (
     _quantity_vectors,
     _skyline,
 )
-from src.model.BPC_LayerMaster.labeling import LayerSpec
+from src.model.BPC_layer.labeling import LayerSpec
 
 
 Residual = Tuple[float, ...]

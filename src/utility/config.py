@@ -5,6 +5,13 @@ class config:
     eps = 0.0001
     gap = 0.00005  # 0.005%
     timelimit = 900
+    max_units_per_compartment = 10
+    gurobi_threads = None
+
+    @classmethod
+    def apply_gurobi_params(cls, model):
+        if cls.gurobi_threads is not None:
+            model.Params.Threads = int(cls.gurobi_threads)
 
     A_len = 4300.0
     B_len = 2000.0

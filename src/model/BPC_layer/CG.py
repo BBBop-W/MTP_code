@@ -40,6 +40,14 @@ class MasterLPSolution:
     dual_eta: float = 0.0
     dual_sigma: Dict[Tuple[int, int, int], float] = field(default_factory=dict)
     unmet_values: Dict[int, float] = field(default_factory=dict)
+
+
+@dataclass
+class MasterIPSolution:
+    status: int
+    objective: float | None
+    theta_values: Dict[str, float]
+    unmet_values: Dict[int, float] = field(default_factory=dict)
     
 @dataclass
 class CGStats:
@@ -49,6 +57,8 @@ class CGStats:
     labeling_time: float = 0.0
     bs_time: float = 0.0
     merge_time: float = 0.0
+    solver_time: float = 0.0
+    solver_nodes: float = 0.0
     labels_feasible: int = 0
     labels_pruned_by_bound: int = 0
     labels_pruned_by_dominance: int = 0
@@ -79,11 +89,20 @@ class MasterProblem:
         self.columns[column.column_id] = column
 
     def seed_initial_columns(self) -> None:
-        # The master is initialized with artificial unmet-demand variables, so
-        # feasibility does not require unpriced physical seed columns. Leaving
-        # this empty avoids injecting columns that have not passed the layer
-        # geometry checks.
-        return
+        # Empty layers are always feasible and are needed so a loaded layer can
+        # be paired with an empty opposite layer under the deck-map constraints.
+        for deck_mode in ["h-h", "h-m", "m-h", "m-m"]:
+            for compartment in ["upper", "lower"]:
+                self.add_column(
+                    PatternColumn(
+                        column_id=f"empty_{compartment}_{deck_mode}",
+                        q={i: 0 for i in self.I},
+                        cost=0.0,
+                        compartment=compartment,
+                        deck_mode=deck_mode,
+                        metadata={"source": "empty_seed"},
+                    )
+                )
 
     def solve_lp(
         self,
@@ -101,6 +120,7 @@ class MasterProblem:
 
         model = gp.Model("mlp_ic_master_layer")
         model.Params.OutputFlag = 1 if log_to_console else 0
+        Config.apply_gurobi_params(model)
         if time_limit is not None:
             model.Params.TimeLimit = float(time_limit)
 
@@ -227,15 +247,84 @@ class MasterProblem:
 
         return None
 
+    def fractional_theta_values(self, solution: MasterLPSolution, eps: float = 1e-5) -> Dict[str, float]:
+        return {
+            cid: value
+            for cid, value in solution.theta_values.items()
+            if value > eps and abs(value - round(value)) > eps
+        }
+
     def is_integral(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         if not solution.theta_values:
             return not self.has_unmet_demand(solution, eps)
         if self.has_unmet_demand(solution, eps):
             return False
-        return self.choose_branch_var(solution, eps) is None
+        return self.choose_branch_var(solution, eps) is None and not self.fractional_theta_values(solution, eps)
 
     def has_unmet_demand(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         return any(value > eps for value in solution.unmet_values.values())
+
+    def solve_restricted_ip(
+        self,
+        branch_q_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
+        time_limit: float | None = None,
+        log_to_console: bool = False,
+    ) -> MasterIPSolution:
+        branch_q_bounds = branch_q_bounds or {}
+        model = gp.Model("mlp_ic_master_layer_ip")
+        model.Params.OutputFlag = 1 if log_to_console else 0
+        Config.apply_gurobi_params(model)
+        if time_limit is not None:
+            model.Params.TimeLimit = float(time_limit)
+
+        theta = {
+            col_id: model.addVar(lb=0.0, ub=gp.GRB.INFINITY, vtype=gp.GRB.INTEGER, obj=col.cost, name=f"theta[{col_id}]")
+            for col_id, col in self.columns.items()
+        }
+        unmet = {
+            i: model.addVar(lb=0.0, vtype=gp.GRB.CONTINUOUS, obj=self.penalty_unmet, name=f"unmet[{i}]")
+            for i in self.I
+        }
+        for i in self.I:
+            model.addConstr(
+                gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items()) + unmet[i] >= self.D[i],
+                name=f"mandatory[{i}]",
+            )
+            model.addConstr(
+                gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items()) <= self.U[i],
+                name=f"optional[{i}]",
+            )
+
+        modes = ["h-h", "h-m", "m-h", "m-m"]
+        for p in modes:
+            model.addConstr(
+                gp.quicksum(theta[cid] for cid, col in self.columns.items() if col.compartment == "upper" and col.deck_mode == p) -
+                gp.quicksum(theta[cid] for cid, col in self.columns.items() if col.compartment == "lower" and col.deck_mode == p) == 0,
+                name=f"wagon_map[{p}]",
+            )
+        model.addConstr(
+            gp.quicksum(theta[cid] for cid, col in self.columns.items() if col.compartment == "upper") <= self.carriage_num,
+            name="wagon_limit",
+        )
+
+        for i, (lb, ub) in branch_q_bounds.items():
+            expr = gp.quicksum(col.q.get(i, 0) * theta[cid] for cid, col in self.columns.items())
+            if lb is not None:
+                model.addConstr(expr >= lb, name=f"branch_q_lb_{i}")
+            if ub is not None:
+                model.addConstr(expr <= ub, name=f"branch_q_ub_{i}")
+
+        model.ModelSense = gp.GRB.MINIMIZE
+        model.optimize()
+
+        if model.Status not in {gp.GRB.OPTIMAL, gp.GRB.SUBOPTIMAL, gp.GRB.TIME_LIMIT} or model.SolCount == 0:
+            return MasterIPSolution(status=model.Status, objective=None, theta_values={})
+        return MasterIPSolution(
+            status=model.Status,
+            objective=float(model.ObjVal),
+            theta_values={cid: float(theta[cid].X) for cid in self.columns},
+            unmet_values={i: float(unmet[i].X) for i in self.I},
+        )
 
 
 class ColumnGenerationEngine:
@@ -278,6 +367,8 @@ class ColumnGenerationEngine:
             
             self.stats.labeling_time += self.pricing_engine.stats.labeling_time
             self.stats.bs_time += self.pricing_engine.stats.bs_time
+            self.stats.solver_time += getattr(self.pricing_engine.stats, "solver_time", 0.0)
+            self.stats.solver_nodes += getattr(self.pricing_engine.stats, "solver_nodes", 0.0)
             self.stats.labels_feasible += self.pricing_engine.stats.labels_feasible
             self.stats.labels_pruned_by_bound += self.pricing_engine.stats.labels_pruned_by_bound
             self.stats.labels_pruned_by_dominance += self.pricing_engine.stats.labels_pruned_by_dominance
@@ -287,6 +378,10 @@ class ColumnGenerationEngine:
             
             self.pricing_engine.stats.labeling_time = 0.0
             self.pricing_engine.stats.bs_time = 0.0
+            if hasattr(self.pricing_engine.stats, "solver_time"):
+                self.pricing_engine.stats.solver_time = 0.0
+            if hasattr(self.pricing_engine.stats, "solver_nodes"):
+                self.pricing_engine.stats.solver_nodes = 0.0
             self.pricing_engine.stats.labels_feasible = 0
             self.pricing_engine.stats.labels_pruned_by_bound = 0
             self.pricing_engine.stats.labels_pruned_by_dominance = 0

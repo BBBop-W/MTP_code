@@ -11,8 +11,11 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_LayerMaster.BBtree import BBTree
-from src.model.BPC_LayerMaster.CG import PatternColumn
+from src.model.BPC_layer.BBtree import BBTree
+from src.model.BPC_layer.CG import PatternColumn
+from src.model.BPC_layer.feasibility_check import HierarchicalBSEvaluator
+from src.model.BPC_layer.labeling import LayerSpec
+from src.utility.config import config as Config
 
 def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
     if not json_path.exists():
@@ -28,9 +31,12 @@ def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
         brand = row["program"]
         model = row["model"]
         car_type_map[(str(brand).strip(), str(model).strip())] = i
+        car_type_map[f"{str(brand).strip()} {str(model).strip()}"] = i
         car_type_map[str(model).strip()] = i 
         
+    evaluator = HierarchicalBSEvaluator(compute_reachable_types=False)
     added_count = 0
+    skipped_infeasible = 0
     for idx, c in enumerate(data.get("carriage", [])):
         deck_mode = c.get("position", "h-h")
         
@@ -49,6 +55,21 @@ def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
                     q_dict[car_id] = q_dict.get(car_id, 0) + 1
             
             if q_dict:
+                layer = LayerSpec(
+                    layer_id=f"{comp}_{deck_mode}",
+                    car_types=master.I,
+                    car_lengths=master.length,
+                    layer_length_limit=Config.top_len if comp == "upper" else Config.bottom_len,
+                    car_heights={i: float(master.car_info.iloc[i - 1]["height"]) for i in master.I},
+                    shape_params={"compartment": comp, "deck": deck_mode},
+                    max_quantity_by_type={
+                        i: min(Config.max_units_per_compartment, master.U[i])
+                        for i in master.I
+                    },
+                )
+                if not evaluator.evaluate(layer, q_dict).feasible:
+                    skipped_infeasible += 1
+                    continue
                 cost = -sum(master.length[i] * q for i, q in q_dict.items())
                 col_id = f"{prefix}_c{idx}_{comp}"
                 pattern = PatternColumn(
@@ -62,7 +83,10 @@ def load_vns_columns_layer_master(master, json_path: Path, prefix: str):
                 master.add_column(pattern)
                 added_count += 1
                 
-    print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix})")
+    if skipped_infeasible:
+        print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix}); skipped {skipped_infeasible} infeasible warmstart columns")
+    else:
+        print(f"Loaded {added_count} layer columns from {json_path.name} ({prefix})")
 
 def run_bpc(
     instance_name: str,
@@ -76,12 +100,13 @@ def run_bpc(
     use_local_residual_skyline: bool = True,
     residual_profile_mode: str = "full",
     compute_reachable_types: bool = False,
+    pricing_method: str = "labeling",
 ):
     instance_dir = PROJECT_ROOT / "data/Instance" / instance_name
     output_dir = PROJECT_ROOT / "result" / instance_name
 
     # Pass dynamic split configuration to BPC's feasibility check
-    import src.model.BPC_LayerMaster.feasibility_check as feas
+    import src.model.BPC_layer.feasibility_check as feas
     feas.GLOBAL_NUM_SPLITS = num_splits
     feas.GLOBAL_INDEP_MODE = independent_mode_split
     feas._SEGMENTS_CACHE.clear()
@@ -109,6 +134,7 @@ def run_bpc(
         log_to_console=False,
         use_dominance=True,
         use_cuts=False,
+        pricing_method=pricing_method,
         use_rc_bound=use_rc_bound,
         use_residual_profile=use_residual_profile,
         use_outer_inner_profile=use_outer_inner_profile,
@@ -139,6 +165,7 @@ def run_bpc(
     print("      LayerMaster BPC Execution Summary       ")
     print("==============================================")
     print(f"Instance           : {instance_name}")
+    print(f"Pricing Method     : {pricing_method}")
     print(f"Explored Nodes     : {result.explored_nodes}")
     print(f"Generated Columns  : {result.generated_columns}")
     if result.best_objective is not None:
@@ -173,5 +200,11 @@ if __name__ == "__main__":
         target_instance = args[0]
         if len(args) > 1 and args[1].lower() in ['false', '0', 'no', 'off']:
             use_ws = False
+        if len(args) > 2:
+            pricing_method = args[2].lower()
+        else:
+            pricing_method = "labeling"
+    else:
+        pricing_method = "labeling"
 
-    run_bpc(target_instance, use_warmstart=use_ws)
+    run_bpc(target_instance, use_warmstart=use_ws, pricing_method=pricing_method)

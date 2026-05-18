@@ -76,14 +76,14 @@ public:
             fout << "            \"top\": [\n";
             for (size_t j = 0; j < carriage[i].route[0].size(); ++j) {
                 Vehicle* v = p->GetVehicle(carriage[i].route[0][j]);
-                fout << "                \"" << v->model << "\"" << (j + 1 == carriage[i].route[0].size() ? "" : ",") << "\n";
+                fout << "                \"" << v->brand << " " << v->model << "\"" << (j + 1 == carriage[i].route[0].size() ? "" : ",") << "\n";
             }
             fout << "            ],\n";
 
             fout << "            \"bottom\": [\n";
             for (size_t j = 0; j < carriage[i].route[1].size(); ++j) {
                 Vehicle* v = p->GetVehicle(carriage[i].route[1][j]);
-                fout << "                \"" << v->model << "\"" << (j + 1 == carriage[i].route[1].size() ? "" : ",") << "\n";
+                fout << "                \"" << v->brand << " " << v->model << "\"" << (j + 1 == carriage[i].route[1].size() ? "" : ",") << "\n";
             }
             fout << "            ]\n";
             fout << "        }" << (i + 1 == carriage.size() ? "" : ",") << "\n";

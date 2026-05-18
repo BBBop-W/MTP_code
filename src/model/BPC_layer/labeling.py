@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import inf
-from typing import Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Protocol, Sequence, Set, Tuple
+
+from src.utility.config import config as Config
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,8 @@ class LabelingOptions:
     use_local_residual_skyline: bool = True
     residual_profile_mode: str = "full"
     compute_reachable_types: bool = False
-    max_units_per_type: int = 6
+    max_units_per_type: int = Config.max_units_per_compartment
+    dominance_support_types: Tuple[int, ...] = ()
     eps: float = 1e-9
 
 
@@ -114,19 +117,31 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_LayerMaster.feasibility_check import (
+from src.model.BPC_layer.feasibility_check import (
     HierarchicalBSEvaluator,
     build_layer_outer_inner_model,
     build_layer_resource_model,
 )
 
 
-def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -> bool:
+def _same_support_on_types(a_q: Dict[int, int], b_q: Dict[int, int], support_types: Sequence[int]) -> bool:
+    return all((a_q.get(i, 0) > 0) == (b_q.get(i, 0) > 0) for i in support_types)
+
+
+def _label_dominates(
+    a: Label,
+    b: Label,
+    ordered_types: List[int],
+    eps: float,
+    support_types: Sequence[int] = (),
+) -> bool:
     if a.reduced_cost > b.reduced_cost + eps:
         return False
     if a.best_length > b.best_length + eps:
         return False
     if not a.reachable_types.issuperset(b.reachable_types):
+        return False
+    if support_types and not _same_support_on_types(a.quantities, b.quantities, support_types):
         return False
 
     for i in ordered_types:
@@ -148,6 +163,7 @@ def _apply_dominance(
     labels: List[Label],
     ordered_types: List[int],
     eps: float,
+    support_types: Sequence[int] = (),
     stats: Optional[LabelingStats] = None,
 ) -> List[Label]:
     kept: List[Label] = []
@@ -155,10 +171,10 @@ def _apply_dominance(
         dominated = False
         remove_idx: List[int] = []
         for idx, old in enumerate(kept):
-            if _label_dominates(old, cand, ordered_types, eps):
+            if _label_dominates(old, cand, ordered_types, eps, support_types=support_types):
                 dominated = True
                 break
-            if _label_dominates(cand, old, ordered_types, eps):
+            if _label_dominates(cand, old, ordered_types, eps, support_types=support_types):
                 remove_idx.append(idx)
         if dominated:
             if stats is not None:
@@ -224,9 +240,24 @@ def _future_reduced_cost_lower_bound(
     return lb
 
 
-def _residual_label_dominates(a: ResidualLabel, b: ResidualLabel, eps: float) -> bool:
+def _residual_label_dominates(
+    a: ResidualLabel,
+    b: ResidualLabel,
+    ordered_types: List[int],
+    eps: float,
+    support_types: Sequence[int] = (),
+) -> bool:
     if a.reduced_cost > b.reduced_cost + eps:
         return False
+    if support_types and not _same_support_on_types(a.quantities, b.quantities, support_types):
+        return False
+
+    quantity_strict = False
+    for i in ordered_types:
+        if a.quantities.get(i, 0) > b.quantities.get(i, 0):
+            return False
+        if a.quantities.get(i, 0) < b.quantities.get(i, 0):
+            quantity_strict = True
 
     profile_strict = False
     for a_res, b_res in zip(a.residual, b.residual):
@@ -235,12 +266,13 @@ def _residual_label_dominates(a: ResidualLabel, b: ResidualLabel, eps: float) ->
         if a_res > b_res + eps:
             profile_strict = True
 
-    return profile_strict or a.reduced_cost < b.reduced_cost - eps
+    return profile_strict or quantity_strict or a.reduced_cost < b.reduced_cost - eps
 
 
 def _apply_residual_dominance(
     labels: List[ResidualLabel],
     eps: float,
+    support_types: Sequence[int] = (),
     stats: Optional[LabelingStats] = None,
 ) -> List[ResidualLabel]:
     if not labels:
@@ -249,9 +281,12 @@ def _apply_residual_dominance(
     import numpy as np
 
     ordered = sorted(labels, key=lambda label: label.reduced_cost)
+    type_order = sorted({i for label in ordered for i in label.quantities})
+    support_idx = [type_order.index(i) for i in support_types if i in type_order]
     dim = len(ordered[0].residual)
     kept_residuals = np.empty((len(ordered), dim), dtype=float)
     kept_costs = np.empty(len(ordered), dtype=float)
+    kept_quantities = np.empty((len(ordered), len(type_order)), dtype=int)
     kept: List[ResidualLabel] = []
 
     for cand in ordered:
@@ -259,11 +294,18 @@ def _apply_residual_dominance(
         kept_count = len(kept)
         if kept_count:
             cand_residual = np.asarray(cand.residual, dtype=float)
+            cand_quantities = np.asarray([cand.quantities.get(i, 0) for i in type_order], dtype=int)
             residual_ok = np.all(kept_residuals[:kept_count] + eps >= cand_residual, axis=1)
-            if np.any(residual_ok):
+            quantity_ok = np.all(kept_quantities[:kept_count] <= cand_quantities, axis=1)
+            if support_idx:
+                support_ok = np.all((kept_quantities[:kept_count, support_idx] > 0) == (cand_quantities[support_idx] > 0), axis=1)
+            else:
+                support_ok = True
+            if np.any(residual_ok & quantity_ok & support_ok):
                 profile_strict = np.any(kept_residuals[:kept_count] > cand_residual + eps, axis=1)
+                quantity_strict = np.any(kept_quantities[:kept_count] < cand_quantities, axis=1)
                 cost_strict = kept_costs[:kept_count] < cand.reduced_cost - eps
-                dominated = bool(np.any(residual_ok & (profile_strict | cost_strict)))
+                dominated = bool(np.any(residual_ok & quantity_ok & support_ok & (profile_strict | quantity_strict | cost_strict)))
 
         if dominated:
             if stats is not None:
@@ -272,6 +314,7 @@ def _apply_residual_dominance(
 
         kept_residuals[kept_count, :] = cand.residual
         kept_costs[kept_count] = cand.reduced_cost
+        kept_quantities[kept_count, :] = [cand.quantities.get(i, 0) for i in type_order]
         kept.append(cand)
 
     if stats is not None:
@@ -479,7 +522,12 @@ def generate_layer_patterns_outer_inner(
                 )
 
         if options.use_dominance:
-            next_labels = _apply_residual_dominance(next_labels, options.eps, stats=stats)
+            next_labels = _apply_residual_dominance(
+                next_labels,
+                options.eps,
+                support_types=options.dominance_support_types,
+                stats=stats,
+            )
 
         current_labels = next_labels
         if not current_labels:
@@ -575,7 +623,7 @@ def generate_layer_patterns_residual(
                         continue
                     residual_children.append(residual)
 
-                if options.use_local_residual_skyline:
+                if options.use_dominance and options.use_local_residual_skyline:
                     residual_children = _local_residual_skyline(residual_children, options.eps, stats=stats)
 
                 for residual in residual_children:
@@ -592,7 +640,12 @@ def generate_layer_patterns_residual(
                     )
 
         if options.use_dominance:
-            next_labels = _apply_residual_dominance(next_labels, options.eps, stats=stats)
+            next_labels = _apply_residual_dominance(
+                next_labels,
+                options.eps,
+                support_types=options.dominance_support_types,
+                stats=stats,
+            )
 
         current_labels = next_labels
         if not current_labels:
@@ -724,7 +777,13 @@ def generate_layer_patterns(
                 )
 
         if options.use_dominance:
-            next_labels = _apply_dominance(next_labels, ordered_types, options.eps, stats=stats)
+            next_labels = _apply_dominance(
+                next_labels,
+                ordered_types,
+                options.eps,
+                support_types=options.dominance_support_types,
+                stats=stats,
+            )
 
         current_labels = next_labels
         if not current_labels:

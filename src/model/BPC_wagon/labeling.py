@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from math import inf
 from typing import Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple
 
+from src.utility.config import config as Config
+
 
 @dataclass(frozen=True)
 class DualValues:
@@ -37,7 +39,7 @@ class LayerSpec:
 class LabelingOptions:
     use_dominance: bool = True
     use_cuts: bool = False
-    max_units_per_type: int = 6
+    max_units_per_type: int = Config.max_units_per_compartment
     eps: float = 1e-9
 
 
@@ -90,7 +92,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC.feasibility_check import HierarchicalBSEvaluator
+from src.model.BPC_wagon.feasibility_check import HierarchicalBSEvaluator
 
 
 def _label_dominates(a: Label, b: Label, ordered_types: List[int], eps: float) -> bool:

@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC.labeling import LayerPattern
+from src.model.BPC_layer.labeling import LayerPattern
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,9 @@ def merge_first_feasible(
     max_total_by_type: Dict[int, int],
     require_negative_reduced_cost: bool = True,
     reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
+    forbidden_signatures: set[Tuple[int, ...]] | None = None,
+    signature_order: List[int] | None = None,
+    select_best: bool = False,
 ) -> Optional[MergedPattern]:
     """Early-stop merge as requested.
 
@@ -42,14 +45,53 @@ def merge_first_feasible(
        - We RELAX the quantity sum by type check here. The Restricted Master Problem 
          already has U_i constraints, so it will naturally ignore or restrict columns 
          that over-use a car type. Removing this check significantly speeds up merge!
+       - If the best merge has already been generated, keep scanning the same deck
+         instead of returning a duplicate that the caller will discard.
     """
 
+    if not select_best:
+        merged = merge_feasible_patterns(
+            upper_patterns=upper_patterns,
+            lower_patterns=lower_patterns,
+            max_total_by_type=max_total_by_type,
+            require_negative_reduced_cost=require_negative_reduced_cost,
+            reduced_cost_fn=reduced_cost_fn,
+            forbidden_signatures=forbidden_signatures,
+            signature_order=signature_order,
+            max_results=1,
+        )
+        return merged[0] if merged else None
+
+    merged = merge_feasible_patterns(
+        upper_patterns=upper_patterns,
+        lower_patterns=lower_patterns,
+        max_total_by_type=max_total_by_type,
+        require_negative_reduced_cost=require_negative_reduced_cost,
+        reduced_cost_fn=reduced_cost_fn,
+        forbidden_signatures=forbidden_signatures,
+        signature_order=signature_order,
+        max_results=1,
+    )
+    return merged[0] if merged else None
+
+
+def merge_feasible_patterns(
+    upper_patterns: List[LayerPattern],
+    lower_patterns: List[LayerPattern],
+    max_total_by_type: Dict[int, int],
+    require_negative_reduced_cost: bool = True,
+    reduced_cost_fn: Callable[[LayerPattern, LayerPattern, Dict[int, int]], float] | None = None,
+    forbidden_signatures: set[Tuple[int, ...]] | None = None,
+    signature_order: List[int] | None = None,
+    max_results: int | None = None,
+) -> List[MergedPattern]:
     if not upper_patterns or not lower_patterns:
-        return None
+        return []
 
     # Sort so the most negative reduced cost is at index 0
     up = sorted(upper_patterns, key=lambda p: p.reduced_cost)
     low = sorted(lower_patterns, key=lambda p: p.reduced_cost)
+    best_by_signature: Dict[Tuple[int, ...], MergedPattern] = {}
 
     for i, j in _pair_order(len(up), len(low)):
         u = up[i]
@@ -62,14 +104,26 @@ def merge_first_feasible(
             continue
 
         merged_q = _merge_quantities(u.quantities, l.quantities)
+        if signature_order is not None:
+            signature = tuple(int(merged_q.get(i, 0)) for i in signature_order)
+        else:
+            signature = tuple(sorted((k, int(v)) for k, v in merged_q.items()))
+        if forbidden_signatures is not None and signature in forbidden_signatures:
+            continue
         rc = reduced_cost_fn(u, l, merged_q) if reduced_cost_fn is not None else u.reduced_cost + l.reduced_cost
         if require_negative_reduced_cost and rc >= -1e-5:
             continue
 
         deck = u_deck if u_deck else l_deck
-        return MergedPattern(deck=deck, quantities=merged_q, reduced_cost=rc, upper=u, lower=l)
+        candidate = MergedPattern(deck=deck, quantities=merged_q, reduced_cost=rc, upper=u, lower=l)
+        old = best_by_signature.get(signature)
+        if old is None or candidate.reduced_cost < old.reduced_cost:
+            best_by_signature[signature] = candidate
 
-    return None
+    out = sorted(best_by_signature.values(), key=lambda candidate: candidate.reduced_cost)
+    if max_results is not None:
+        out = out[:max_results]
+    return out
 
 def merge_patterns_for_mode(
     mode: str,

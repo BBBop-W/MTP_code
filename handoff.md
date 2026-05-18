@@ -28,7 +28,7 @@
 *   **算子优化**：废弃了低效的全局 Best Improvement 算子，引入并混排了 `RelocateRandom`, `SwapRandom`, `OptRandom` 等 **First Improvement (首次改进)** 算子。
 *   **时间熔断机制**：全局超时 (300秒) 和 无提升超时 (15~120秒)。保证代码在大规模下不会假死。
 
-## 4. BPC 精确求解器优化 (Python `src/model/BPC_LayerMaster/`)
+## 4. BPC 精确求解器优化 (Python `src/model/BPC_layer/`)
 *   **安全距离免检策略 (`labeling.py`)**：引入了极速剪枝机制。只要单层车辆数 $\le 2$ 或者“所有车辆总长 + 缓冲间距”塞得进最核心的无分隔大区（上层 14.9m，下层 12.4m），就**直接跳过 DP 和 Gurobi 检查**。该策略使 Feasibility Check 耗时**暴降 150 倍**。
 *   **MIP Gap 与分支树追踪 (`BBtree.py`)**：
     *   加入全局 Lower Bound (LP 放宽后的理论下界) 追踪。

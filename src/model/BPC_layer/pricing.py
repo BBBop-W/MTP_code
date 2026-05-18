@@ -10,8 +10,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from src.model.BPC_LayerMaster.CG import MasterProblem, MasterLPSolution, PatternColumn
-from src.model.BPC_LayerMaster.labeling import (
+from src.model.BPC_layer.CG import MasterProblem, MasterLPSolution, PatternColumn
+from src.model.BPC_layer.labeling import (
     LayerSpec,
     generate_layer_patterns,
     generate_layer_patterns_outer_inner,
@@ -20,7 +20,7 @@ from src.model.BPC_LayerMaster.labeling import (
     LabelingOptions,
     LabelingStats,
 )
-from src.model.BPC_LayerMaster.feasibility_check import HierarchicalBSEvaluator
+from src.model.BPC_layer.feasibility_check import HierarchicalBSEvaluator
 from src.utility.config import config as Config
 
 @dataclass
@@ -97,7 +97,7 @@ class EarlyStopPricingEngine:
         modes = ["h-h", "h-m", "m-h", "m-m"]
         new_columns = []
 
-        from src.model.BPC_LayerMaster.cuts import SimpleCutEvaluator, CutState
+        from src.model.BPC_layer.cuts import SimpleCutEvaluator, CutState
         cut_evaluator = None
         if self.options.use_cuts:
             cut_state = CutState(sigma_by_subset=solution.dual_sigma)

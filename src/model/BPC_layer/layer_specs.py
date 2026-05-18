@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-from model.BPC.labeling import LayerSpec
+from src.model.BPC_layer.labeling import LayerSpec
 from src.utility.config import config as Config
 
 
@@ -19,7 +19,7 @@ def build_layer_sequence(
     car_lengths: Dict[int, float],
     car_heights: Dict[int, float],
     max_quantity_by_type: Dict[int, int],
-    max_units_per_type: int = 6,
+    max_units_per_type: int = Config.max_units_per_compartment,
 ) -> List[LayerRunItem]:
     """Build the 8 layer runs in the required order.
 

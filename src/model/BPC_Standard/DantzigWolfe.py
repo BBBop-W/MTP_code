@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utility.dynamic_segmentation import get_model_segments
+from src.utility.config import config as Config
 
 class BBNode:
     def __init__(self, node_id, depth, branch_a_bounds, branch_q_bounds):
@@ -49,6 +50,7 @@ class DWMasterProblem:
         
         model = gp.Model("DW_Master")
         model.Params.OutputFlag = 0
+        Config.apply_gurobi_params(model)
 
         theta = {}
         for idx, col in enumerate(self.columns):
@@ -147,9 +149,21 @@ class DWPricingProblem:
         self.h_h_limits = {}
         self.h_m_limits = {}
         self.H_k = {"left": [], "right": []}
+        self.H_lower = []
+        self.H_upper = []
+        self.component_side = {}
+        self.P = ["h-h", "h-m", "m-h", "m-m"]
+        self.deck_side_mode = {
+            "h-h": {"left": "h", "right": "h"},
+            "h-m": {"left": "h", "right": "m"},
+            "m-h": {"left": "m", "right": "h"},
+            "m-m": {"left": "m", "right": "m"},
+        }
         
         lower_central = "lower_central"
         self.H.append(lower_central)
+        self.H_lower.append(lower_central)
+        self.component_side[lower_central] = "central"
         self.L[lower_central] = self.segments_data["lower"]["central"]["len"]
         self.h_h_limits[lower_central] = self.segments_data["lower"]["central"]["h_h"]
         self.h_m_limits[lower_central] = self.segments_data["lower"]["central"]["h_m"]
@@ -162,6 +176,8 @@ class DWPricingProblem:
             for side in ["left", "right"]:
                 h_name = f"lower_{b_name}_{side}"
                 self.H.append(h_name)
+                self.H_lower.append(h_name)
+                self.component_side[h_name] = side
                 self.L[h_name] = block["len"]
                 self.h_h_limits[h_name] = block["h_h"]
                 self.h_m_limits[h_name] = block["h_m"]
@@ -169,6 +185,8 @@ class DWPricingProblem:
 
         upper_central = "upper_central"
         self.H.append(upper_central)
+        self.H_upper.append(upper_central)
+        self.component_side[upper_central] = "central"
         self.L[upper_central] = self.segments_data["upper"]["central"]["len"]
         self.h_h_limits[upper_central] = self.segments_data["upper"]["central"]["h_h"]
         self.h_m_limits[upper_central] = self.segments_data["upper"]["central"]["h_m"]
@@ -181,6 +199,8 @@ class DWPricingProblem:
             for side in ["left", "right"]:
                 h_name = f"upper_{b_name}_{side}"
                 self.H.append(h_name)
+                self.H_upper.append(h_name)
+                self.component_side[h_name] = side
                 self.L[h_name] = block["len"]
                 self.h_h_limits[h_name] = block["h_h"]
                 self.h_m_limits[h_name] = block["h_m"]
@@ -188,6 +208,17 @@ class DWPricingProblem:
 
         self.epsilon = {(i, h): int(self.heights[i] <= self.h_h_limits[h]) for i in self.I for h in self.H}
         self.phi = {(i, h): int(self.heights[i] <= self.h_m_limits[h]) for i in self.I for h in self.H}
+
+    def _height_limit(self, h: str, side_mode: str) -> float:
+        return self.h_m_limits[h] if side_mode == "m" else self.h_h_limits[h]
+
+    def _eta(self, i: int, p: str, h: str) -> int:
+        side = self.component_side[h]
+        if side == "central":
+            limit = min(self._height_limit(h, side_mode) for side_mode in self.deck_side_mode[p].values())
+        else:
+            limit = self._height_limit(h, self.deck_side_mode[p][side])
+        return int(self.heights[i] <= limit)
 
     def get_intervals(self, layer_prefix, num_blocks):
         intervals = []
@@ -209,11 +240,12 @@ class DWPricingProblem:
     def solve(self, duals):
         model = gp.Model("DW_Pricing")
         model.Params.OutputFlag = 0
+        Config.apply_gurobi_params(model)
         model.Params.MIPGap = 1e-4
 
-        K = ["left", "right"]
-        pi = model.addVars(K, vtype=gp.GRB.BINARY, name="pi")
-        x = model.addVars(self.I, self.H, vtype=gp.GRB.INTEGER, lb=0, name="x")
+        N = 10
+        z = model.addVars(self.P, vtype=gp.GRB.BINARY, name="z")
+        x = model.addVars(self.I, self.H, vtype=gp.GRB.INTEGER, lb=0, ub=N, name="x")
         
         q = {i: gp.quicksum(x[i, h] for h in self.H) for i in self.I}
         a = model.addVars(self.I, vtype=gp.GRB.BINARY, name="a")
@@ -230,8 +262,7 @@ class DWPricingProblem:
         model.setObjective(expr, gp.GRB.MINIMIZE)
         
         Delta = 400.0
-        BigM = 25000.0
-        N = 10
+        model.addConstr(gp.quicksum(z[p] for p in self.P) == 1, name="deck_position")
 
         lower_intervals = self.get_intervals("lower", self.num_lower_blocks)
         for blocks, mod in lower_intervals:
@@ -241,18 +272,17 @@ class DWPricingProblem:
         upper_intervals = self.get_intervals("upper", self.num_upper_blocks)
         for blocks, mod in upper_intervals:
             cap = sum(self.L[h] for h in blocks) + mod
-            is_full_deck = (len(blocks) == 2 * self.num_upper_blocks + 1)
-            if is_full_deck:
-                model.addConstr(gp.quicksum(x[i, h] * (self.lengths[i] + Delta) for i in self.I for h in blocks) <= cap)
-            else:
-                for k in K:
-                    model.addConstr(gp.quicksum(x[i, h] * (self.lengths[i] + Delta) for i in self.I for h in blocks) <= cap + BigM * (1 - pi[k]))
+            model.addConstr(gp.quicksum(x[i, h] * (self.lengths[i] + Delta) for i in self.I for h in blocks) <= cap)
 
-        for k in K:
-            for h in self.H_k[k]:
-                for i in self.I:
-                    model.addConstr(x[i, h] <= N * self.epsilon[i, h] + N * pi[k])
-                    model.addConstr(x[i, h] <= N * self.phi[i, h] + N * (1 - pi[k]))
+        for i in self.I:
+            for h in self.H:
+                model.addConstr(
+                    x[i, h] <= N * gp.quicksum(self._eta(i, p, h) * z[p] for p in self.P),
+                    name=f"height[{i},{h}]",
+                )
+
+        model.addConstr(gp.quicksum(x[i, h] for i in self.I for h in self.H_lower) <= N, name="lower_quantity")
+        model.addConstr(gp.quicksum(x[i, h] for i in self.I for h in self.H_upper) <= N, name="upper_quantity")
 
         model.optimize()
         
