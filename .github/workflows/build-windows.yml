@@ -12,16 +12,23 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Show files
+        shell: cmd
+        run: |
+          dir
+          dir /s *.cpp
+          dir /s *.h
 
       - name: Compile C++ files
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
-          cl /EHsc /std:c++17 VNS_cpp\*.cpp /Iinclude /Fe:program.exe
+          cl /EHsc /std:c++17 *.cpp /Fe:program.exe
 
       - name: Upload EXE
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-exe
           path: program.exe
