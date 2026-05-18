@@ -26,6 +26,7 @@ private:
     std::vector<DynamicSegment> upper_blocks;
     std::vector<DynamicInterval> lower_intervals;
     std::vector<DynamicInterval> upper_intervals;
+    static constexpr double kPi = 3.14159265358979323846;
     
     // Geometry math from Python dynamic_segmentation.py
     double carriage_length = 25000.0;
@@ -40,8 +41,8 @@ private:
     double floor_end_height = 680.0;
     double floor_groove_length = 10867.0;
     double floor_groove_start = 12500.0 - 5433.5;
-    double slope_ratio = std::tan(9.0 * M_PI / 180.0);
-    double floor_slope_start = (12500.0 - 5433.5) - (680.0 / std::tan(9.0 * M_PI / 180.0));
+    double slope_ratio = std::tan(9.0 * kPi / 180.0);
+    double floor_slope_start = (12500.0 - 5433.5) - (680.0 / std::tan(9.0 * kPi / 180.0));
 
     double _deck_height(double x, bool is_m) {
         if (!is_m) return deck_h_height;
