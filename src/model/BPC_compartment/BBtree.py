@@ -86,6 +86,7 @@ class BBTree:
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
         mip_gap_tol: float = 5e-6,
+        time_limit: float | None = None,
     ) -> None:
         self.instance_dir = instance_dir
         self.output_dir = output_root / instance_dir.name
@@ -100,6 +101,7 @@ class BBTree:
         self.log_to_console = log_to_console
         self.print_bb_progress = print_bb_progress
         self.mip_gap_tol = float(mip_gap_tol)
+        self.time_limit = None if time_limit is None else float(time_limit)
 
         self.master = MasterProblem(
             car_info=self.car_info,
@@ -153,6 +155,12 @@ class BBTree:
         start_time = time.time()
 
         while queue and explored < self.max_nodes:
+            elapsed = time.time() - start_time
+            if self.time_limit is not None and elapsed >= self.time_limit:
+                if self.print_bb_progress:
+                    print(f"[BB] Time limit reached: {elapsed:.2f}s >= {self.time_limit:.2f}s")
+                break
+
             # Sort queue to process best bound first (Best-first search)
             queue = deque(sorted(list(queue), key=lambda x: x.lower_bound))
             

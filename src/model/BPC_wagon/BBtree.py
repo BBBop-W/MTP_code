@@ -96,6 +96,8 @@ class BBTree:
         profile_generator_mode: str = "hyb",
         print_bb_progress: bool = True,
         print_subproblem_progress: bool = False,
+        time_limit: float | None = None,
+        mip_gap_tol: float | None = None,
     ) -> None:
         self.instance_dir = instance_dir
         self.output_dir = output_root / instance_dir.name
@@ -144,6 +146,8 @@ class BBTree:
         self.max_nodes = max_nodes
         self.log_to_console = log_to_console
         self.print_bb_progress = print_bb_progress
+        self.time_limit = None if time_limit is None else float(time_limit)
+        self.mip_gap_tol = None if mip_gap_tol is None else float(mip_gap_tol)
 
         self.best_obj: float | None = None
         self.best_theta: Dict[str, float] | None = None
@@ -160,6 +164,19 @@ class BBTree:
         start_time = time.time()
 
         while queue and explored < self.max_nodes:
+            elapsed = time.time() - start_time
+            if self.time_limit is not None and elapsed >= self.time_limit:
+                if self.print_bb_progress:
+                    print(f"[BB] Time limit reached: {elapsed:.2f}s >= {self.time_limit:.2f}s")
+                break
+            if self.mip_gap_tol is not None and self.best_obj is not None:
+                best_bound = self._final_bound(queue)
+                gap = self._gap(self.best_obj, best_bound)
+                if gap is not None and gap <= self.mip_gap_tol:
+                    if self.print_bb_progress:
+                        print(f"[BB] Target MIP Gap reached: {gap:.4%} <= {self.mip_gap_tol:.4%}")
+                    break
+
             node = queue.popleft()
             explored += 1
 
@@ -190,6 +207,13 @@ class BBTree:
                 if self.best_obj is None or lp_solution.objective < self.best_obj:
                     self.best_obj = lp_solution.objective
                     self.best_theta = {k: round(v) for k, v in lp_solution.theta_values.items()}
+                if self.mip_gap_tol is not None and self.best_obj is not None:
+                    best_bound = self._final_bound(queue)
+                    gap = self._gap(self.best_obj, best_bound)
+                    if gap is not None and gap <= self.mip_gap_tol:
+                        if self.print_bb_progress:
+                            print(f"[BB] Target MIP Gap reached upon finding new incumbent: {gap:.4%} <= {self.mip_gap_tol:.4%}")
+                        break
                 continue
 
             # Branch on chosen a or q variable
@@ -214,6 +238,13 @@ class BBTree:
                             for k, v in ip_solution.theta_values.items()
                             if abs(v) > 1e-5
                         }
+                    if self.mip_gap_tol is not None and self.best_obj is not None:
+                        best_bound = self._final_bound(queue)
+                        gap = self._gap(self.best_obj, best_bound)
+                        if gap is not None and gap <= self.mip_gap_tol:
+                            if self.print_bb_progress:
+                                print(f"[BB] Target MIP Gap reached upon restricted IP: {gap:.4%} <= {self.mip_gap_tol:.4%}")
+                            break
                     if ip_solution.objective <= current_bound + 1e-6:
                         continue
                 

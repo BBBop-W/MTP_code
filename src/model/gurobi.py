@@ -55,6 +55,7 @@ def build_and_solve(
     objective_type: str = "length",
     time_limit: float | None = None,
     mip_gap: float | None = None,
+    threads: int | None = None,
 ) -> dict:
     cars_path = instance_dir / "cars.csv"
     carriage_path = instance_dir / "carriage.csv"
@@ -157,6 +158,8 @@ def build_and_solve(
     model.Params.OutputFlag = 1 if log_to_console else 0
     model.Params.TimeLimit = Config.timelimit if time_limit is None else float(time_limit)
     model.Params.MIPGap = Config.gap if mip_gap is None else float(mip_gap)
+    if threads is not None:
+        model.Params.Threads = int(threads)
 
     z = model.addVars(J, P, vtype=gp.GRB.BINARY, name="z")
     x = model.addVars(I, J, H, vtype=gp.GRB.INTEGER, lb=0, ub=N, name="x")
@@ -248,6 +251,7 @@ def build_and_solve(
         "independent_mode_split": bool(independent_mode_split),
         "time_limit": float(model.Params.TimeLimit),
         "mip_gap_target": float(model.Params.MIPGap),
+        "threads": int(model.Params.Threads),
         "runtime_sec": float(model.Runtime),
         "node_count": float(model.NodeCount),
         "num_vars": int(model.NumVars),
