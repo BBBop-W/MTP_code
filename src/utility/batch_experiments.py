@@ -52,11 +52,9 @@ SEED_IDS = [1, 2]
 DEFAULT_NUM_SPLITS = 3
 DEFAULT_INDEP_MODE = False
 DEFAULT_TIME_LIMIT = 3600.0
-DEFAULT_MIP_GAP = 0.0001
+DEFAULT_MIP_GAP = 0.0
 POST_SOLVE_GRACE_SEC = 600.0
 DEFAULT_PROFILE_GENERATOR_MODE = "gr"
-DEFAULT_MAX_NODES = 5000
-DEFAULT_MAX_CG_ITERS = 3000
 
 RESULT_COLUMNS = [
     "run_id",
@@ -227,6 +225,13 @@ def bpc_run_status(obj: object, gap: object, mip_gap_tol: float) -> str:
     return "OK" if float(gap) <= float(mip_gap_tol) else "GAP"
 
 
+def normalize_max_nodes(value: object) -> int | None:
+    if value is None:
+        return None
+    max_nodes = int(value)
+    return None if max_nodes <= 0 else max_nodes
+
+
 def load_existing_run_ids(path: Path) -> set[str]:
     if not path.exists():
         return set()
@@ -390,8 +395,7 @@ def bpc_wagon_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
             tree = WagonBBTree(
                 instance_dir=Path(str(payload["instance_dir"])),
                 output_root=Path(str(payload["output_root"])),
-                max_nodes=int(payload["max_nodes"]),
-                max_cg_iters=int(payload["max_cg_iters"]),
+                max_nodes=normalize_max_nodes(payload.get("max_nodes")),
                 log_to_console=False,
                 use_dominance=bool(payload.get("use_dominance", True)),
                 use_cuts=bool(payload["use_cuts"]),
@@ -456,8 +460,7 @@ def bpc_compartment_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
             tree = CompartmentBBTree(
                 instance_dir=Path(str(payload["instance_dir"])),
                 output_root=Path(str(payload["output_root"])),
-                max_nodes=int(payload["max_nodes"]),
-                max_cg_iters=int(payload["max_cg_iters"]),
+                max_nodes=normalize_max_nodes(payload.get("max_nodes")),
                 log_to_console=False,
                 use_dominance=bool(payload.get("use_dominance", True)),
                 use_cuts=bool(payload["use_cuts"]),
@@ -522,8 +525,6 @@ def run_plan(
     independent_mode_split: bool,
     time_limit: float,
     mip_gap: float,
-    max_nodes: int,
-    max_cg_iters: int,
     profile_generator_mode: str,
     skip_existing: bool = True,
     max_runs: int | None = None,
@@ -710,8 +711,6 @@ def run_plan(
                 "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
                 "use_dominance": True,
-                "max_nodes": max_nodes,
-                "max_cg_iters": max_cg_iters,
                 "max_columns_per_pricing": Config.max_wagon_pricing_columns,
             }
             summary = solve_with_watchdog(bpc_wagon_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
@@ -777,8 +776,6 @@ def run_plan(
                 "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
                 "use_dominance": True,
-                "max_nodes": max_nodes,
-                "max_cg_iters": max_cg_iters,
                 "max_columns_per_pricing": Config.max_wagon_pricing_columns,
             }
             summary = solve_with_watchdog(bpc_wagon_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
@@ -847,8 +844,6 @@ def run_plan(
                 "use_rc_bound": True,
                 "use_height_order": True,
                 "use_local_residual_skyline": True,
-                "max_nodes": max_nodes,
-                "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
             }
             summary = solve_with_watchdog(bpc_compartment_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
@@ -922,8 +917,6 @@ def run_plan(
                 "use_rc_bound": True,
                 "use_height_order": True,
                 "use_local_residual_skyline": True,
-                "max_nodes": max_nodes,
-                "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
             }
             summary = solve_with_watchdog(bpc_compartment_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
@@ -997,8 +990,6 @@ def run_plan(
                 "use_rc_bound": False,
                 "use_height_order": False,
                 "use_local_residual_skyline": False,
-                "max_nodes": max_nodes,
-                "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
             }
             summary = solve_with_watchdog(bpc_compartment_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
@@ -1066,9 +1057,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-splits", type=int, default=DEFAULT_NUM_SPLITS)
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=DEFAULT_INDEP_MODE)
     parser.add_argument("--time-limit", type=float, default=DEFAULT_TIME_LIMIT)
-    parser.add_argument("--mip-gap", type=float, default=DEFAULT_MIP_GAP)
-    parser.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES)
-    parser.add_argument("--max-cg-iters", type=int, default=DEFAULT_MAX_CG_ITERS)
     parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
     parser.add_argument("--skip-heuristics", action="store_true", help="Skip BI/VNS runs.")
     parser.add_argument("--no-warmstart", action="store_true", help="Disable warmstart columns for BPC runs.")
@@ -1116,9 +1104,7 @@ def main() -> None:
             num_splits=args.num_splits,
             independent_mode_split=args.independent_mode_split,
             time_limit=args.time_limit,
-            mip_gap=args.mip_gap,
-            max_nodes=args.max_nodes,
-            max_cg_iters=args.max_cg_iters,
+            mip_gap=DEFAULT_MIP_GAP,
             profile_generator_mode=args.profile_generator_mode,
             skip_existing=not args.no_skip_existing,
             max_runs=args.max_runs,

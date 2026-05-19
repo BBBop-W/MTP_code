@@ -5,11 +5,7 @@ param(
   [int]$ParallelJobs = 1,
   [int]$NumSplits = 3,
   [double]$TimeLimit = 3600.0,
-  [double]$MipGap = 0.0001,
-  [int]$MaxNodes = 5000,
-  [int]$MaxCgIters = 3000,
   [string]$ProfileGeneratorMode = "gr",
-  [string]$VnsExePath = "VNS_cpp\vns_solver.exe",
   [switch]$SkipHeuristics,
   [switch]$NoWarmstart,
   [switch]$NoGenerate,
@@ -23,10 +19,10 @@ if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$exePath = if ([System.IO.Path]::IsPathRooted($VnsExePath)) { $VnsExePath } else { Join-Path $RepoRoot $VnsExePath }
-if (-not $SkipHeuristics -and -not (Test-Path $exePath)) {
+$exePath = Join-Path $RepoRoot "VNS_cpp\vns_solver.exe"
+if (-not (Test-Path $exePath)) {
   Write-Host "VNS executable not found: $exePath" -ForegroundColor Red
-  Write-Host "Pass -VnsExePath with the executable path relative to RepoRoot, for example: -VnsExePath 'VNS_cpp\build\Release\vns_solver.exe'." -ForegroundColor Yellow
+  Write-Host "You said it has already been compiled. Please copy vns_solver.exe to VNS_cpp\vns_solver.exe." -ForegroundColor Yellow
   exit 1
 }
 
@@ -46,9 +42,6 @@ if (-not $NoGenerate) {
     --generate `
     --num-splits $NumSplits `
     --time-limit $TimeLimit `
-    --mip-gap $MipGap `
-    --max-nodes $MaxNodes `
-    --max-cg-iters $MaxCgIters `
     --profile-generator-mode $ProfileGeneratorMode
 }
 
@@ -76,11 +69,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       $ShardId,
       $NumSplits,
       $TimeLimit,
-      $MipGap,
-      $MaxNodes,
-      $MaxCgIters,
       $ProfileGeneratorMode,
-      $VnsExePath,
       $ExtraArgs
     )
 
@@ -95,11 +84,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       "--result-suffix", "shard$ShardId",
       "--num-splits", "$NumSplits",
       "--time-limit", "$TimeLimit",
-      "--mip-gap", "$MipGap",
-      "--max-nodes", "$MaxNodes",
-      "--max-cg-iters", "$MaxCgIters",
-      "--profile-generator-mode", "$ProfileGeneratorMode",
-      "--vns-exe", "$VnsExePath"
+      "--profile-generator-mode", "$ProfileGeneratorMode"
     )
 
     foreach ($arg in $ExtraArgs) {
@@ -116,11 +101,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
     $sid, `
     $NumSplits, `
     $TimeLimit, `
-    $MipGap, `
-    $MaxNodes, `
-    $MaxCgIters, `
     $ProfileGeneratorMode, `
-    $VnsExePath, `
     $extraArgs
 }
 

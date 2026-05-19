@@ -372,10 +372,10 @@ class MasterProblem:
 
 
 class ColumnGenerationEngine:
-    def __init__(self, master: MasterProblem, pricing_engine, max_cg_iters: int = 100, log_to_console: bool = True):
+    def __init__(self, master: MasterProblem, pricing_engine, max_cg_iters: int | None = None, log_to_console: bool = True):
         self.master = master
         self.pricing_engine = pricing_engine
-        self.max_cg_iters = max_cg_iters
+        self.max_cg_iters = None if max_cg_iters is None or int(max_cg_iters) <= 0 else int(max_cg_iters)
         self.log_to_console = log_to_console
         self.generated_columns = 0
         self.stats = CGStats()
@@ -407,7 +407,8 @@ class ColumnGenerationEngine:
         if last_solution.objective is None:
             return last_solution
 
-        for it in range(1, self.max_cg_iters + 1):
+        it = 1
+        while self.max_cg_iters is None or it <= self.max_cg_iters:
             t0 = time.time()
             new_columns = self.pricing_engine.generate_columns(last_solution, self.master)
             p_time = time.time() - t0
@@ -458,6 +459,7 @@ class ColumnGenerationEngine:
                             log_to_console=False,
                         )
                         self.stats.master_time += (time.time() - t0)
+                        it += 1
                         continue
                 self._log_cg(f"Iter={it}: no new column found (reduced cost >= 0). Stop CG.")
                 break
@@ -486,6 +488,8 @@ class ColumnGenerationEngine:
             
             if last_solution.objective is None:
                 break
+
+            it += 1
 
         self.stats.total_time += (time.time() - start_solve)
         return last_solution

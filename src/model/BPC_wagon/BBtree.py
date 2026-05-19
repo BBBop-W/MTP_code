@@ -84,8 +84,8 @@ class BBTree:
         self,
         instance_dir: Path,
         output_root: Path,
-        max_nodes: int = 200,
-        max_cg_iters: int = 100,
+        max_nodes: int | None = None,
+        max_cg_iters: int | None = None,
         log_to_console: bool = True,
         use_dominance: bool = True,
         use_cuts: bool = False,
@@ -143,7 +143,7 @@ class BBTree:
             log_to_console=print_subproblem_progress
         )
 
-        self.max_nodes = max_nodes
+        self.max_nodes = None if max_nodes is None or int(max_nodes) <= 0 else int(max_nodes)
         self.log_to_console = log_to_console
         self.print_bb_progress = print_bb_progress
         self.time_limit = None if time_limit is None else float(time_limit)
@@ -159,12 +159,13 @@ class BBTree:
         explored = 0
 
         if self.print_bb_progress:
-            print(f"[BB] Start solve: max_nodes={self.max_nodes}")
+            max_nodes_label = "unlimited" if self.max_nodes is None else str(self.max_nodes)
+            print(f"[BB] Start solve: max_nodes={max_nodes_label}")
             print(f"{'Node':>6}  {'Depth':>6}  {'Left':>6}  {'Current Bound':>14}  {'Best Incumbent':>14}  {'Time(s)':>8}")
 
         start_time = time.time()
 
-        while queue and explored < self.max_nodes:
+        while queue and (self.max_nodes is None or explored < self.max_nodes):
             elapsed = time.time() - start_time
             if self.time_limit is not None and elapsed >= self.time_limit:
                 if self.print_bb_progress:
