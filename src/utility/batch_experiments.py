@@ -236,7 +236,10 @@ def load_existing_run_ids(path: Path) -> set[str]:
     return set(df["run_id"].astype(str).tolist())
 
 
-def vns_executable() -> Path:
+def vns_executable(vns_exe: str | Path | None = None) -> Path:
+    if vns_exe is not None:
+        path = Path(vns_exe)
+        return path if path.is_absolute() else PROJECT_ROOT / path
     exe_name = "vns_solver.exe" if os.name == "nt" else "vns_solver"
     return PROJECT_ROOT / "VNS_cpp" / exe_name
 
@@ -262,8 +265,9 @@ def run_vns_solver(
     num_splits: int,
     independent_mode_split: bool,
     time_limit: float | None,
+    vns_exe: str | Path | None = None,
 ) -> Dict[str, object]:
-    exe = vns_executable()
+    exe = vns_executable(vns_exe)
     if not exe.exists():
         raise FileNotFoundError(f"VNS executable not found: {exe}")
 
@@ -278,7 +282,7 @@ def run_vns_solver(
     try:
         completed = subprocess.run(
             cmd,
-            cwd=str(PROJECT_ROOT / "VNS_cpp"),
+            cwd=str(exe.parent),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -526,6 +530,7 @@ def run_plan(
     skip_heuristics: bool = False,
     use_warmstart: bool = True,
     result_suffix: str = "",
+    vns_exe: str | Path | None = None,
 ) -> Path:
     result_root = RESULT_ROOT / batch_tag(date_tag)
     result_root.mkdir(parents=True, exist_ok=True)
@@ -569,6 +574,7 @@ def run_plan(
                 num_splits=num_splits,
                 independent_mode_split=independent_mode_split,
                 time_limit=time_limit + POST_SOLVE_GRACE_SEC,
+                vns_exe=vns_exe,
             )
             bi_run_id = f"bi_{row.instance_id}"
             if should_run(bi_run_id):
@@ -1071,6 +1077,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-shards", type=int, default=1, help="Number of parallel shards.")
     parser.add_argument("--shard-id", type=int, default=0, help="Shard index, from 0 to num-shards-1.")
     parser.add_argument("--result-suffix", type=str, default="", help="Suffix for shard-specific result CSV.")
+    parser.add_argument(
+        "--vns-exe",
+        type=str,
+        default=None,
+        help="Path to the compiled VNS executable. Relative paths are resolved from the repository root.",
+    )
     return parser.parse_args()
 
 
@@ -1113,6 +1125,7 @@ def main() -> None:
             skip_heuristics=args.skip_heuristics,
             use_warmstart=not args.no_warmstart,
             result_suffix=args.result_suffix,
+            vns_exe=args.vns_exe,
         )
         print(f"Results CSV: {results_path}")
 

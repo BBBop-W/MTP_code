@@ -9,6 +9,7 @@ param(
   [int]$MaxNodes = 5000,
   [int]$MaxCgIters = 3000,
   [string]$ProfileGeneratorMode = "gr",
+  [string]$VnsExePath = "VNS_cpp\vns_solver.exe",
   [switch]$SkipHeuristics,
   [switch]$NoWarmstart,
   [switch]$NoGenerate,
@@ -22,10 +23,10 @@ if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$exePath = Join-Path $RepoRoot "VNS_cpp\vns_solver.exe"
+$exePath = if ([System.IO.Path]::IsPathRooted($VnsExePath)) { $VnsExePath } else { Join-Path $RepoRoot $VnsExePath }
 if (-not $SkipHeuristics -and -not (Test-Path $exePath)) {
   Write-Host "VNS executable not found: $exePath" -ForegroundColor Red
-  Write-Host "You said it has already been compiled. Please copy vns_solver.exe to VNS_cpp\vns_solver.exe." -ForegroundColor Yellow
+  Write-Host "Pass -VnsExePath with the executable path relative to RepoRoot, for example: -VnsExePath 'VNS_cpp\build\Release\vns_solver.exe'." -ForegroundColor Yellow
   exit 1
 }
 
@@ -79,6 +80,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       $MaxNodes,
       $MaxCgIters,
       $ProfileGeneratorMode,
+      $VnsExePath,
       $ExtraArgs
     )
 
@@ -96,7 +98,8 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       "--mip-gap", "$MipGap",
       "--max-nodes", "$MaxNodes",
       "--max-cg-iters", "$MaxCgIters",
-      "--profile-generator-mode", "$ProfileGeneratorMode"
+      "--profile-generator-mode", "$ProfileGeneratorMode",
+      "--vns-exe", "$VnsExePath"
     )
 
     foreach ($arg in $ExtraArgs) {
@@ -117,6 +120,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
     $MaxNodes, `
     $MaxCgIters, `
     $ProfileGeneratorMode, `
+    $VnsExePath, `
     $extraArgs
 }
 
@@ -125,11 +129,8 @@ Wait-Job $jobs
 $failed = $false
 
 foreach ($job in $jobs) {
-  $jobOutput = Receive-Job $job
-  Write-Host "===== $($job.Name): $($job.State) =====" -ForegroundColor Yellow
-  $jobOutput | Select-String -Pattern "Shard|Generated|Instances:|Results:|Results CSV:|Traceback|ERROR|Error|failed|TIME_LIMIT" | ForEach-Object {
-    Write-Host $_.Line
-  }
+  Write-Host "===== Output from $($job.Name) =====" -ForegroundColor Yellow
+  Receive-Job $job
 
   if ($job.State -ne "Completed") {
     Write-Host "Job $($job.Name) failed with state $($job.State)" -ForegroundColor Red
