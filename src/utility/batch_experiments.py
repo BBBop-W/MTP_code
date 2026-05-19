@@ -458,10 +458,14 @@ def run_plan(
     profile_generator_mode: str,
     skip_existing: bool = True,
     max_runs: int | None = None,
+    skip_heuristics: bool = False,
+    use_warmstart: bool = True,
+    result_suffix: str = "",
 ) -> Path:
     result_root = RESULT_ROOT / batch_tag(date_tag)
     result_root.mkdir(parents=True, exist_ok=True)
-    results_path = result_root / f"batch_results_{date_tag}.csv"
+    suffix = f"_{result_suffix}" if result_suffix else ""
+    results_path = result_root / f"batch_results_{date_tag}{suffix}.csv"
     seen_run_ids = load_existing_run_ids(results_path)
 
     completed = 0
@@ -474,11 +478,9 @@ def run_plan(
         def should_run(run_id: str) -> bool:
             return not (skip_existing and run_id in seen_run_ids)
 
-        need_vns = any(
-            should_run(run_id)
-            for run_id in [f"bi_{row.instance_id}", f"vns_{row.instance_id}"]
-        )
-        warmstart_needed = any(
+        warmstart_requested = bool(use_warmstart)
+        warmstart_available = bi_json.exists() and vns_json.exists()
+        warmstart_needed = warmstart_requested and any(
             should_run(run_id)
             for run_id in [
                 f"bpc_wagon_label_{row.instance_id}",
@@ -487,10 +489,16 @@ def run_plan(
                 f"bpc_compartment_solver_{row.instance_id}",
             ]
         )
-        if warmstart_needed and (not bi_json.exists() or not vns_json.exists()):
-            need_vns = True
+        need_vns = False
+        if not skip_heuristics:
+            need_vns = any(
+                should_run(run_id)
+                for run_id in [f"bi_{row.instance_id}", f"vns_{row.instance_id}"]
+            )
+            if warmstart_needed and not warmstart_available:
+                need_vns = True
 
-        if need_vns:
+        if not skip_heuristics and need_vns:
             vns_summary = run_vns_solver(
                 row.instance_name,
                 num_splits=num_splits,
@@ -559,6 +567,15 @@ def run_plan(
                 if max_runs is not None and completed >= max_runs:
                     break
 
+        if skip_heuristics and warmstart_requested and not warmstart_available:
+            print(
+                f"[skip] {row.instance_id} warmstart files missing; running without warmstart",
+                flush=True,
+            )
+
+        warmstart_available = bi_json.exists() and vns_json.exists()
+        warmstart_enabled = warmstart_requested and warmstart_available
+
         gurobi_run_id = f"gurobi_{row.instance_id}"
         if should_run(gurobi_run_id):
             output_dir = result_root / "compact_gurobi" / row.instance_id
@@ -610,7 +627,7 @@ def run_plan(
                 "instance_dir": str(instance_dir),
                 "output_root": str(result_root / "bpc_wagon_label"),
                 "pricing_method": "merging",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "bi_json": str(bi_json),
                 "vns_json": str(vns_json),
@@ -629,7 +646,7 @@ def run_plan(
                 "method": "bpc_wagon_label",
                 "family": "bpc_wagon",
                 "pricing_method": "merging",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
@@ -673,7 +690,7 @@ def run_plan(
                 "instance_dir": str(instance_dir),
                 "output_root": str(result_root / "bpc_wagon_solver"),
                 "pricing_method": "solver",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "bi_json": str(bi_json),
                 "vns_json": str(vns_json),
@@ -692,7 +709,7 @@ def run_plan(
                 "method": "bpc_wagon_solver",
                 "family": "bpc_wagon",
                 "pricing_method": "solver",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
@@ -736,7 +753,7 @@ def run_plan(
                 "instance_dir": str(instance_dir),
                 "output_root": str(result_root / "bpc_compartment_label"),
                 "pricing_method": "labeling",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "bi_json": str(bi_json),
                 "vns_json": str(vns_json),
@@ -755,7 +772,7 @@ def run_plan(
                 "method": "bpc_compartment_label",
                 "family": "bpc_compartment",
                 "pricing_method": "labeling",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
@@ -804,7 +821,7 @@ def run_plan(
                 "instance_dir": str(instance_dir),
                 "output_root": str(result_root / "bpc_compartment_solver"),
                 "pricing_method": "solver",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "bi_json": str(bi_json),
                 "vns_json": str(vns_json),
@@ -823,7 +840,7 @@ def run_plan(
                 "method": "bpc_compartment_solver",
                 "family": "bpc_compartment",
                 "pricing_method": "solver",
-                "use_warmstart": True,
+                "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
@@ -952,8 +969,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES)
     parser.add_argument("--max-cg-iters", type=int, default=DEFAULT_MAX_CG_ITERS)
     parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
+    parser.add_argument("--skip-heuristics", action="store_true", help="Skip BI/VNS runs.")
+    parser.add_argument("--no-warmstart", action="store_true", help="Disable warmstart columns for BPC runs.")
     parser.add_argument("--max-runs", type=int, default=None, help="Optional cap for this trial run.")
     parser.add_argument("--no-skip-existing", action="store_true", help="Rerun rows even if results exist.")
+    parser.add_argument("--num-shards", type=int, default=1, help="Number of parallel shards.")
+    parser.add_argument("--shard-id", type=int, default=0, help="Shard index, from 0 to num-shards-1.")
+    parser.add_argument("--result-suffix", type=str, default="", help="Suffix for shard-specific result CSV.")
     return parser.parse_args()
 
 
@@ -964,6 +986,15 @@ def main() -> None:
 
     cases = build_cases()
     plan = build_plan(args.date, cases)
+
+    if args.num_shards < 1:
+        raise ValueError("--num-shards must be at least 1")
+    if args.shard_id < 0 or args.shard_id >= args.num_shards:
+        raise ValueError("--shard-id must be in [0, num_shards - 1]")
+
+    if args.run and args.num_shards > 1:
+        plan = [row for idx, row in enumerate(plan) if idx % args.num_shards == args.shard_id]
+        print(f"Shard {args.shard_id}/{args.num_shards}: {len(plan)} instances")
 
     if args.generate:
         plan_df, instance_root, result_root = generate_instances(args.date, cases)
@@ -984,6 +1015,8 @@ def main() -> None:
             profile_generator_mode=args.profile_generator_mode,
             skip_existing=not args.no_skip_existing,
             max_runs=args.max_runs,
+            use_warmstart=not args.no_warmstart,
+            result_suffix=args.result_suffix,
         )
         print(f"Results CSV: {results_path}")
 
