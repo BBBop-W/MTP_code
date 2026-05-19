@@ -156,6 +156,7 @@ def build_and_solve(
 
     model = gp.Model("motorail_mlp_ic")
     model.Params.OutputFlag = 1 if log_to_console else 0
+    Config.apply_gurobi_params(model)
     model.Params.TimeLimit = Config.timelimit if time_limit is None else float(time_limit)
     model.Params.MIPGap = Config.gap if mip_gap is None else float(mip_gap)
     if threads is not None:
@@ -270,8 +271,10 @@ def build_and_solve(
         "optional_total": int(sum(optional.values())),
     }
 
+    print_summary = bool(DBG_PRINT_SUMMARY) and bool(log_to_console)
+
     if model.status == gp.GRB.Status.INFEASIBLE:
-        if bool(DBG_PRINT_SUMMARY):
+        if print_summary:
             print(f"Optimization was stopped with status {model.status}")
         model.computeIIS()
         model.write(str(diagnostics_dir / "model_iis.ilp"))
@@ -280,17 +283,17 @@ def build_and_solve(
         return summary
 
     if model.SolCount <= 0:
-        if bool(DBG_PRINT_SUMMARY):
+        if print_summary:
             print(f"Optimization terminated with status {model.status}, no feasible incumbent found.")
         with open(solution_dir / "solve_summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
         return summary
 
     if model.status == gp.GRB.Status.OPTIMAL:
-        if bool(DBG_PRINT_SUMMARY):
+        if print_summary:
             print(f"Optimal objective value is {model.objVal:g}")
     else:
-        if bool(DBG_PRINT_SUMMARY):
+        if print_summary:
             print(f"Optimization terminated with status {model.status}, exporting incumbent solution.")
             print(f"Incumbent objective value is {model.objVal:g}")
 

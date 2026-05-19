@@ -23,7 +23,7 @@ if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
 }
 
 $exePath = Join-Path $RepoRoot "VNS_cpp\vns_solver.exe"
-if (-not (Test-Path $exePath)) {
+if (-not $SkipHeuristics -and -not (Test-Path $exePath)) {
   Write-Host "VNS executable not found: $exePath" -ForegroundColor Red
   Write-Host "You said it has already been compiled. Please copy vns_solver.exe to VNS_cpp\vns_solver.exe." -ForegroundColor Yellow
   exit 1
@@ -125,8 +125,11 @@ Wait-Job $jobs
 $failed = $false
 
 foreach ($job in $jobs) {
-  Write-Host "===== Output from $($job.Name) =====" -ForegroundColor Yellow
-  Receive-Job $job
+  $jobOutput = Receive-Job $job
+  Write-Host "===== $($job.Name): $($job.State) =====" -ForegroundColor Yellow
+  $jobOutput | Select-String -Pattern "Shard|Generated|Instances:|Results:|Results CSV:|Traceback|ERROR|Error|failed|TIME_LIMIT" | ForEach-Object {
+    Write-Host $_.Line
+  }
 
   if ($job.State -ne "Completed") {
     Write-Host "Job $($job.Name) failed with state $($job.State)" -ForegroundColor Red

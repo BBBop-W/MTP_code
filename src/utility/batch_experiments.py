@@ -58,6 +58,52 @@ DEFAULT_PROFILE_GENERATOR_MODE = "gr"
 DEFAULT_MAX_NODES = 5000
 DEFAULT_MAX_CG_ITERS = 3000
 
+RESULT_COLUMNS = [
+    "run_id",
+    "method",
+    "family",
+    "instance_id",
+    "instance_name",
+    "problem_scale",
+    "num_types_I",
+    "num_wagons_J",
+    "seed_id",
+    "seed",
+    "replicate_id",
+    "num_splits",
+    "independent_mode_split",
+    "time_limit",
+    "mip_gap_target",
+    "status",
+    "loaded_length_mm",
+    "runtime_sec",
+    "gap",
+    "nodes",
+    "best_bound",
+    "objective",
+    "pricing_method",
+    "use_warmstart",
+    "use_cuts",
+    "acceleration_profile",
+    "profile_generator_mode",
+    "generated_columns",
+    "master_time",
+    "pricing_time",
+    "labeling_time",
+    "feasibility_time",
+    "merge_time",
+    "subproblem_solver_time",
+    "subproblem_solver_nodes",
+    "labels_feasible",
+    "labels_pruned_by_bound",
+    "labels_pruned_by_dominance",
+    "labels_pruned_by_local_skyline",
+    "labels_after_dominance",
+    "reachability_probes",
+    "result_dir",
+    "runner_status",
+]
+
 
 @dataclass(frozen=True)
 class PlanRow:
@@ -165,9 +211,20 @@ def append_result(path: Path, record: Dict[str, object]) -> None:
         if "run_id" in existing.columns and "run_id" in record:
             existing = existing[existing["run_id"] != record["run_id"]]
         combined = pd.concat([existing, row], ignore_index=True, sort=False) if not existing.empty else row
-        combined.to_csv(path, index=False)
     else:
-        row.to_csv(path, index=False)
+        combined = row
+    ordered = [col for col in RESULT_COLUMNS if col in combined.columns]
+    ordered.extend(col for col in combined.columns if col not in ordered)
+    combined = combined.reindex(columns=ordered)
+    combined.to_csv(path, index=False)
+
+
+def bpc_run_status(obj: object, gap: object, mip_gap_tol: float) -> str:
+    if obj is None or pd.isna(obj):
+        return "NO_SOLUTION"
+    if gap is None or pd.isna(gap):
+        return "INCUMBENT"
+    return "OK" if float(gap) <= float(mip_gap_tol) else "GAP"
 
 
 def load_existing_run_ids(path: Path) -> set[str]:
@@ -318,7 +375,9 @@ def gurobi_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
 def bpc_wagon_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
     try:
         old_timelimit = Config.timelimit
+        old_threads = Config.gurobi_threads
         Config.timelimit = float(payload["time_limit"]) if payload["time_limit"] is not None else old_timelimit
+        Config.gurobi_threads = int(payload.get("threads") or old_threads or 1)
         try:
             compartment_feasibility.GLOBAL_NUM_SPLITS = int(payload["num_splits"])
             compartment_feasibility.GLOBAL_INDEP_MODE = bool(payload["independent_mode_split"])
@@ -330,7 +389,7 @@ def bpc_wagon_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
                 max_nodes=int(payload["max_nodes"]),
                 max_cg_iters=int(payload["max_cg_iters"]),
                 log_to_console=False,
-                use_dominance=True,
+                use_dominance=bool(payload.get("use_dominance", True)),
                 use_cuts=bool(payload["use_cuts"]),
                 pricing_method=str(payload["pricing_method"]),
                 num_splits=int(payload["num_splits"]),
@@ -353,14 +412,16 @@ def bpc_wagon_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
             runtime_sec = time.perf_counter() - t0
         finally:
             Config.timelimit = old_timelimit
+            Config.gurobi_threads = old_threads
 
         obj = result.best_objective
+        gap = result.gap
         summary = {
-            "status": "OK" if obj is not None else "NO_SOLUTION",
+            "status": bpc_run_status(obj, gap, float(payload["mip_gap_tol"])),
             "objective": obj,
             "loaded_length_mm": None if obj is None else -float(obj),
             "best_bound": result.best_bound,
-            "bpc_gap": result.gap,
+            "gap": gap,
             "explored_nodes": result.explored_nodes,
             "generated_columns": result.generated_columns,
             "runtime_sec": runtime_sec,
@@ -380,7 +441,9 @@ def bpc_wagon_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
 def bpc_compartment_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
     try:
         old_timelimit = Config.timelimit
+        old_threads = Config.gurobi_threads
         Config.timelimit = float(payload["time_limit"]) if payload["time_limit"] is not None else old_timelimit
+        Config.gurobi_threads = int(payload.get("threads") or old_threads or 1)
         try:
             compartment_feasibility.GLOBAL_NUM_SPLITS = int(payload["num_splits"])
             compartment_feasibility.GLOBAL_INDEP_MODE = bool(payload["independent_mode_split"])
@@ -392,12 +455,12 @@ def bpc_compartment_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
                 max_nodes=int(payload["max_nodes"]),
                 max_cg_iters=int(payload["max_cg_iters"]),
                 log_to_console=False,
-                use_dominance=True,
+                use_dominance=bool(payload.get("use_dominance", True)),
                 use_cuts=bool(payload["use_cuts"]),
                 pricing_method=str(payload["pricing_method"]),
-                use_rc_bound=True,
-                use_height_order=True,
-                use_local_residual_skyline=True,
+                use_rc_bound=bool(payload.get("use_rc_bound", True)),
+                use_height_order=bool(payload.get("use_height_order", True)),
+                use_local_residual_skyline=bool(payload.get("use_local_residual_skyline", True)),
                 residual_profile_mode="full",
                 profile_generator_mode=str(payload["profile_generator_mode"]),
                 max_columns_per_subproblem=int(payload["max_columns_per_subproblem"]),
@@ -417,14 +480,16 @@ def bpc_compartment_worker(payload: Dict[str, object], queue: mp.Queue) -> None:
             runtime_sec = time.perf_counter() - t0
         finally:
             Config.timelimit = old_timelimit
+            Config.gurobi_threads = old_threads
 
         obj = result.best_objective
+        gap = result.gap
         summary = {
-            "status": "OK" if obj is not None else "NO_SOLUTION",
+            "status": bpc_run_status(obj, gap, float(payload["mip_gap_tol"])),
             "objective": obj,
             "loaded_length_mm": None if obj is None else -float(obj),
             "best_bound": result.best_bound,
-            "bpc_gap": result.gap,
+            "gap": gap,
             "explored_nodes": result.explored_nodes,
             "generated_columns": result.generated_columns,
             "runtime_sec": runtime_sec,
@@ -524,7 +589,7 @@ def run_plan(
                     "time_limit": time_limit,
                     "mip_gap_target": mip_gap,
                     "status": vns_summary.get("status"),
-                    "objective": vns_summary.get("bi_objective"),
+                    "objective": None,
                     "loaded_length_mm": vns_summary.get("bi_loaded_length"),
                     "runtime_sec": vns_summary.get("bi_runtime_sec"),
                     "result_dir": str(result_root / row.instance_id / "BI"),
@@ -555,7 +620,7 @@ def run_plan(
                     "time_limit": time_limit,
                     "mip_gap_target": mip_gap,
                     "status": vns_summary.get("status"),
-                    "objective": vns_summary.get("vns_objective"),
+                    "objective": None,
                     "loaded_length_mm": vns_summary.get("vns_loaded_length"),
                     "runtime_sec": vns_summary.get("runtime_sec"),
                     "result_dir": str(result_root / row.instance_id / "VNS"),
@@ -610,8 +675,9 @@ def run_plan(
                 "objective": summary.get("obj_val"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "node_count": summary.get("node_count"),
-                "mip_gap": summary.get("mip_gap"),
+                "gap": summary.get("mip_gap"),
+                "nodes": summary.get("node_count"),
+                "best_bound": summary.get("obj_bound"),
                 "result_dir": str(output_dir),
                 "runner_status": summary.get("runner_status"),
             }
@@ -635,7 +701,9 @@ def run_plan(
                 "independent_mode_split": independent_mode_split,
                 "time_limit": time_limit,
                 "mip_gap_tol": mip_gap,
+                "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
+                "use_dominance": True,
                 "max_nodes": max_nodes,
                 "max_cg_iters": max_cg_iters,
                 "max_columns_per_pricing": Config.max_wagon_pricing_columns,
@@ -648,6 +716,7 @@ def run_plan(
                 "pricing_method": "merging",
                 "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
+                "acceleration_profile": "warmstart_cuts_label_pruning",
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
                 "instance_name": row.instance_name,
@@ -665,9 +734,10 @@ def run_plan(
                 "objective": summary.get("objective"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "explored_nodes": summary.get("explored_nodes"),
+                "nodes": summary.get("explored_nodes"),
                 "generated_columns": summary.get("generated_columns"),
-                "bpc_gap": summary.get("bpc_gap"),
+                "gap": summary.get("gap"),
+                "best_bound": summary.get("best_bound"),
                 "master_time": summary.get("master_time"),
                 "pricing_time": summary.get("pricing_time"),
                 "labeling_time": summary.get("labeling_time"),
@@ -698,7 +768,9 @@ def run_plan(
                 "independent_mode_split": independent_mode_split,
                 "time_limit": time_limit,
                 "mip_gap_tol": mip_gap,
+                "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
+                "use_dominance": True,
                 "max_nodes": max_nodes,
                 "max_cg_iters": max_cg_iters,
                 "max_columns_per_pricing": Config.max_wagon_pricing_columns,
@@ -711,6 +783,7 @@ def run_plan(
                 "pricing_method": "solver",
                 "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
+                "acceleration_profile": "warmstart_cuts_solver_pricing",
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
                 "instance_name": row.instance_name,
@@ -728,9 +801,10 @@ def run_plan(
                 "objective": summary.get("objective"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "explored_nodes": summary.get("explored_nodes"),
+                "nodes": summary.get("explored_nodes"),
                 "generated_columns": summary.get("generated_columns"),
-                "bpc_gap": summary.get("bpc_gap"),
+                "gap": summary.get("gap"),
+                "best_bound": summary.get("best_bound"),
                 "master_time": summary.get("master_time"),
                 "pricing_time": summary.get("pricing_time"),
                 "labeling_time": summary.get("labeling_time"),
@@ -761,7 +835,12 @@ def run_plan(
                 "independent_mode_split": independent_mode_split,
                 "time_limit": time_limit,
                 "mip_gap_tol": mip_gap,
+                "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
+                "use_dominance": True,
+                "use_rc_bound": True,
+                "use_height_order": True,
+                "use_local_residual_skyline": True,
                 "max_nodes": max_nodes,
                 "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
@@ -774,6 +853,7 @@ def run_plan(
                 "pricing_method": "labeling",
                 "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
+                "acceleration_profile": "warmstart_cuts_label_pruning",
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
                 "instance_name": row.instance_name,
@@ -791,9 +871,10 @@ def run_plan(
                 "objective": summary.get("objective"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "explored_nodes": summary.get("explored_nodes"),
+                "nodes": summary.get("explored_nodes"),
                 "generated_columns": summary.get("generated_columns"),
-                "bpc_gap": summary.get("bpc_gap"),
+                "gap": summary.get("gap"),
+                "best_bound": summary.get("best_bound"),
                 "master_time": summary.get("master_time"),
                 "pricing_time": summary.get("pricing_time"),
                 "labeling_time": summary.get("labeling_time"),
@@ -829,7 +910,12 @@ def run_plan(
                 "independent_mode_split": independent_mode_split,
                 "time_limit": time_limit,
                 "mip_gap_tol": mip_gap,
+                "threads": 1,
                 "profile_generator_mode": profile_generator_mode,
+                "use_dominance": True,
+                "use_rc_bound": True,
+                "use_height_order": True,
+                "use_local_residual_skyline": True,
                 "max_nodes": max_nodes,
                 "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
@@ -842,6 +928,7 @@ def run_plan(
                 "pricing_method": "solver",
                 "use_warmstart": warmstart_enabled,
                 "use_cuts": True,
+                "acceleration_profile": "warmstart_cuts_solver_pricing",
                 "profile_generator_mode": profile_generator_mode,
                 "instance_id": row.instance_id,
                 "instance_name": row.instance_name,
@@ -859,9 +946,10 @@ def run_plan(
                 "objective": summary.get("objective"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "explored_nodes": summary.get("explored_nodes"),
+                "nodes": summary.get("explored_nodes"),
                 "generated_columns": summary.get("generated_columns"),
-                "bpc_gap": summary.get("bpc_gap"),
+                "gap": summary.get("gap"),
+                "best_bound": summary.get("best_bound"),
                 "master_time": summary.get("master_time"),
                 "pricing_time": summary.get("pricing_time"),
                 "labeling_time": summary.get("labeling_time"),
@@ -897,7 +985,12 @@ def run_plan(
                 "independent_mode_split": independent_mode_split,
                 "time_limit": time_limit,
                 "mip_gap_tol": mip_gap,
-                "profile_generator_mode": profile_generator_mode,
+                "threads": 1,
+                "profile_generator_mode": "ex",
+                "use_dominance": False,
+                "use_rc_bound": False,
+                "use_height_order": False,
+                "use_local_residual_skyline": False,
                 "max_nodes": max_nodes,
                 "max_cg_iters": max_cg_iters,
                 "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
@@ -910,7 +1003,8 @@ def run_plan(
                 "pricing_method": "labeling",
                 "use_warmstart": False,
                 "use_cuts": False,
-                "profile_generator_mode": profile_generator_mode,
+                "acceleration_profile": "plain_no_warmstart_no_cuts",
+                "profile_generator_mode": "ex",
                 "instance_id": row.instance_id,
                 "instance_name": row.instance_name,
                 "problem_scale": base.scale,
@@ -927,9 +1021,10 @@ def run_plan(
                 "objective": summary.get("objective"),
                 "loaded_length_mm": summary.get("loaded_length_mm"),
                 "runtime_sec": summary.get("runtime_sec"),
-                "explored_nodes": summary.get("explored_nodes"),
+                "nodes": summary.get("explored_nodes"),
                 "generated_columns": summary.get("generated_columns"),
-                "bpc_gap": summary.get("bpc_gap"),
+                "gap": summary.get("gap"),
+                "best_bound": summary.get("best_bound"),
                 "master_time": summary.get("master_time"),
                 "pricing_time": summary.get("pricing_time"),
                 "labeling_time": summary.get("labeling_time"),
@@ -1015,6 +1110,7 @@ def main() -> None:
             profile_generator_mode=args.profile_generator_mode,
             skip_existing=not args.no_skip_existing,
             max_runs=args.max_runs,
+            skip_heuristics=args.skip_heuristics,
             use_warmstart=not args.no_warmstart,
             result_suffix=args.result_suffix,
         )

@@ -251,6 +251,14 @@ class MasterProblem:
 
         return None
 
+    @staticmethod
+    def fractional_theta_values(solution: MasterLPSolution, eps: float = 1e-5) -> Dict[str, float]:
+        return {
+            cid: value
+            for cid, value in solution.theta_values.items()
+            if value > eps and abs(value - round(value)) > eps
+        }
+
     def solve_restricted_ip(
         self,
         branch_a_bounds: Dict[int, Tuple[float | None, float | None]] | None = None,
@@ -316,7 +324,7 @@ class MasterProblem:
     def is_integral(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         if not solution.theta_values:
             return True
-        return self.choose_branch_var(solution, eps) is None
+        return not self.fractional_theta_values(solution, eps) and self.choose_branch_var(solution, eps) is None
 
 
 class ColumnGenerationEngine:

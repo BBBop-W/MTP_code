@@ -151,6 +151,7 @@ class BBTree:
 
         self.best_obj: float | None = None
         self.best_theta: Dict[str, float] | None = None
+        self.unresolved_bounds: List[float] = []
 
     def solve(self) -> BPCResult:
         node_counter = 0
@@ -219,6 +220,32 @@ class BBTree:
             # Branch on chosen a or q variable
             branch_var = self.master.choose_branch_var(lp_solution)
             if branch_var is None:
+                t0 = time.time()
+                ip_solution = self.master.solve_restricted_ip(
+                    branch_a_bounds=node.branch_a_bounds,
+                    branch_q_bounds=node.branch_q_bounds,
+                    time_limit=Config.timelimit,
+                    log_to_console=False,
+                )
+                self.cg_engine.stats.master_time += time.time() - t0
+                if ip_solution.objective is not None:
+                    if self.best_obj is None or ip_solution.objective < self.best_obj:
+                        self.best_obj = ip_solution.objective
+                        self.best_theta = {
+                            k: round(v)
+                            for k, v in ip_solution.theta_values.items()
+                            if abs(v) > 1e-5
+                        }
+                    if ip_solution.objective <= current_bound + 1e-6:
+                        continue
+                self.unresolved_bounds.append(current_bound)
+                if self.print_bb_progress:
+                    frac_count = len(self.master.fractional_theta_values(lp_solution))
+                    print(
+                        f"[BB] Fractional theta remains without a/q branch candidate: "
+                        f"frac_theta={frac_count}, lp={current_bound:.6f}, "
+                        f"restricted_ip={ip_solution.objective}"
+                    )
                 continue
 
             if branch_var[0] == "a":
@@ -238,14 +265,14 @@ class BBTree:
                             for k, v in ip_solution.theta_values.items()
                             if abs(v) > 1e-5
                         }
-                    if self.mip_gap_tol is not None and self.best_obj is not None:
-                        best_bound = self._final_bound(queue)
-                        gap = self._gap(self.best_obj, best_bound)
-                        if gap is not None and gap <= self.mip_gap_tol:
-                            if self.print_bb_progress:
-                                print(f"[BB] Target MIP Gap reached upon restricted IP: {gap:.4%} <= {self.mip_gap_tol:.4%}")
-                            break
                     if ip_solution.objective <= current_bound + 1e-6:
+                        if self.mip_gap_tol is not None and self.best_obj is not None:
+                            best_bound = self._final_bound(queue)
+                            gap = self._gap(self.best_obj, best_bound)
+                            if gap is not None and gap <= self.mip_gap_tol:
+                                if self.print_bb_progress:
+                                    print(f"[BB] Target MIP Gap reached upon restricted IP: {gap:.4%} <= {self.mip_gap_tol:.4%}")
+                                break
                         continue
                 
             b_type, car_type, value = branch_var
@@ -328,11 +355,10 @@ class BBTree:
     def _final_bound(self, queue: deque[BBNode]) -> float | None:
         if self.best_obj is None:
             return None
-        if not queue:
-            return self.best_obj
         finite_bounds = [node.lower_bound for node in queue if node.lower_bound != -math.inf]
+        finite_bounds.extend(self.unresolved_bounds)
         if not finite_bounds:
-            return None
+            return self.best_obj
         return min(self.best_obj, min(finite_bounds))
 
     @staticmethod

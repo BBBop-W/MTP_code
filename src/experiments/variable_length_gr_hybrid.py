@@ -17,6 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.utility.config import config as Config
+
 
 Residual = Tuple[float, ...]
 QuantityKey = Tuple[Tuple[int, int], ...]
@@ -606,6 +608,7 @@ def solve_pattern_master(case: WholeModelCase, method: MethodConfig) -> Dict[str
     patterns = sorted(profile_map)
     model = gp.Model(f"pattern_master_{case.name}_{method.name}")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
     y = model.addVars(range(len(patterns)), vtype=gp.GRB.INTEGER, lb=0, ub=case.num_compartments, name="y")
     model.addConstr(gp.quicksum(y[p] for p in range(len(patterns))) <= case.num_compartments, name="compartments")
     for car_type in sorted(case.instance.choices_by_type):
@@ -639,6 +642,7 @@ def solve_pattern_master(case: WholeModelCase, method: MethodConfig) -> Dict[str
 def solve_compact_whole(case: WholeModelCase) -> Dict[str, object]:
     model = gp.Model(f"compact_{case.name}")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
     car_types = sorted(case.instance.choices_by_type)
     compartments = range(case.num_compartments)
     choice_index = {

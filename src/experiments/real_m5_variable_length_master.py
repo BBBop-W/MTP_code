@@ -30,6 +30,7 @@ from src.experiments.variable_length_gr_hybrid import (
     solve_instance,
 )
 from src.model.BPC_compartment.BBtree import normalize_car_table
+from src.utility.config import config as Config
 from src.utility.dynamic_segmentation import get_model_segments
 
 
@@ -335,6 +336,7 @@ def solve_pattern_master(
 ) -> Dict[str, object]:
     model = gp.Model("real_m5_pattern_master")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
     if time_limit is not None:
         model.Params.TimeLimit = float(time_limit)
     if mip_gap is not None:
@@ -440,6 +442,7 @@ def solve_compact(
 ) -> Dict[str, object]:
     model = gp.Model("real_m5_variable_length_compact")
     model.Params.OutputFlag = 0
+    Config.apply_gurobi_params(model)
     if time_limit is not None:
         model.Params.TimeLimit = float(time_limit)
     if mip_gap is not None:

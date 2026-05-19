@@ -142,6 +142,7 @@ class BBTree:
         self.best_obj: float | None = None
         self.best_theta: Dict[str, float] | None = None
         self.global_lb: float = -math.inf
+        self.unresolved_bounds: list[float] = []
 
     def solve(self) -> BPCResult:
         node_counter = 0
@@ -257,6 +258,7 @@ class BBTree:
                     and ip_solution.objective <= current_bound + 1e-6
                 ):
                     continue
+                self.unresolved_bounds.append(current_bound)
                 if self.print_bb_progress:
                     frac_count = len(self.master.fractional_theta_values(lp_solution))
                     print(
@@ -320,14 +322,13 @@ class BBTree:
     def _final_bound(self, queue: deque[BBNode]) -> float | None:
         if self.best_obj is None:
             return None
-        if not queue:
-            return self.best_obj
         finite_open_bounds = [node.lower_bound for node in queue if node.lower_bound != -math.inf]
+        finite_open_bounds.extend(self.unresolved_bounds)
         if finite_open_bounds:
-            return min(self.best_obj, max(self.global_lb, min(finite_open_bounds)))
+            return min(self.best_obj, min(finite_open_bounds))
         if self.global_lb != -math.inf:
             return min(self.best_obj, self.global_lb)
-        return None
+        return self.best_obj
 
     @staticmethod
     def _gap(best_obj: float | None, best_bound: float | None) -> float | None:

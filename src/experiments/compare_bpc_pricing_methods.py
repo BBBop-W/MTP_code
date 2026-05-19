@@ -126,6 +126,7 @@ def run_gurobi_method(
         objective_type="length",
         time_limit=time_limit,
         mip_gap=mip_gap,
+        threads=Config.gurobi_threads,
     )
     elapsed = time.perf_counter() - t0
     loaded_length = summary.get("loaded_length_mm")
@@ -165,7 +166,7 @@ def main() -> None:
     parser.add_argument("--max-nodes", type=int, default=5000)
     parser.add_argument("--max-cg-iters", type=int, default=3000)
     parser.add_argument("--mip-gap-tol", type=float, default=1e-8)
-    parser.add_argument("--gurobi-threads", type=int, default=None)
+    parser.add_argument("--gurobi-threads", type=int, default=1)
     parser.add_argument("--wagon-pricing-columns", type=int, default=Config.max_wagon_pricing_columns)
     parser.add_argument(
         "--compartment-columns-per-subproblem",

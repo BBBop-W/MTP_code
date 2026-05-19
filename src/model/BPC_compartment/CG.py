@@ -294,7 +294,7 @@ class MasterProblem:
             return not self.has_unmet_demand(solution, eps)
         if self.has_unmet_demand(solution, eps):
             return False
-        return self.choose_branch_var(solution, eps) is None
+        return not self.fractional_theta_values(solution, eps) and self.choose_branch_var(solution, eps) is None
 
     def has_unmet_demand(self, solution: MasterLPSolution, eps: float = 1e-5) -> bool:
         return any(value > eps for value in solution.unmet_values.values())
