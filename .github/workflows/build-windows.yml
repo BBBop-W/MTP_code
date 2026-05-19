@@ -1,0 +1,35 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multiChunking
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Show files
+        shell: cmd
+        run: |
+          dir
+          dir VNS_cpp
+          dir VNS_cpp\*.cpp
+          dir VNS_cpp\*.h
+
+      - name: Compile C++ files
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+          cl /EHsc /std:c++17 VNS_cpp\*.cpp /I VNS_cpp /Fe:program.exe
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-exe
+          path: program.exe
