@@ -5,6 +5,7 @@ param(
   [int]$ParallelJobs = 1,
   [int]$NumSplits = 3,
   [double]$TimeLimit = 3600.0,
+  [double]$MipGap = 0.0001,
   [string]$ProfileGeneratorMode = "gr",
   [switch]$SkipHeuristics,
   [switch]$NoWarmstart,
@@ -42,6 +43,7 @@ if (-not $NoGenerate) {
     --generate `
     --num-splits $NumSplits `
     --time-limit $TimeLimit `
+    --mip-gap $MipGap `
     --profile-generator-mode $ProfileGeneratorMode
 }
 
@@ -69,6 +71,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       $ShardId,
       $NumSplits,
       $TimeLimit,
+      $MipGap,
       $ProfileGeneratorMode,
       $ExtraArgs
     )
@@ -84,6 +87,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
       "--result-suffix", "shard$ShardId",
       "--num-splits", "$NumSplits",
       "--time-limit", "$TimeLimit",
+      "--mip-gap", "$MipGap",
       "--profile-generator-mode", "$ProfileGeneratorMode"
     )
 
@@ -101,6 +105,7 @@ for ($sid = 0; $sid -lt $ParallelJobs; $sid++) {
     $sid, `
     $NumSplits, `
     $TimeLimit, `
+    $MipGap, `
     $ProfileGeneratorMode, `
     $extraArgs
 }

@@ -66,6 +66,28 @@ public:
         }
     }
 
+    void SyncProblemState(Problem* p) const {
+        for (auto& v : p->vehicle) {
+            v.var_mandatory = v.num_mandatory;
+            v.var_optional = v.num_optional;
+        }
+        for (const auto& c : carriage) {
+            for (int f : {0, 1}) {
+                for (int v_id : c.route[f]) {
+                    Vehicle* v = p->GetVehicle(v_id);
+                    if (v == nullptr) {
+                        continue;
+                    }
+                    if (v->var_mandatory > 0) {
+                        v->var_mandatory--;
+                    } else if (v->var_optional > 0) {
+                        v->var_optional--;
+                    }
+                }
+            }
+        }
+    }
+
     void Summarize(Problem* p, const std::string& dir_path) {
         std::ofstream fout(dir_path + "/carriage_info.json");
         fout << "{\n    \"carriage\": [\n";

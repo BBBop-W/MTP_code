@@ -14,7 +14,7 @@ public:
     int mode_left;  // 0 for horizontal (h), 1 for middle (m)
     int mode_right; // 0 for horizontal (h), 1 for middle (m)
 
-    Carriage() : id(0), spacing(400), obj(0.0), actual_length(0.0), num(0), mode_left(0), mode_right(0) {}
+    Carriage() : id(0), spacing(static_cast<int>(Config::safety_clearance_delta)), obj(0.0), actual_length(0.0), num(0), mode_left(0), mode_right(0) {}
 
     int length(int floor = -1) const {
         if (floor == -1) {

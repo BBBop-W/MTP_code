@@ -6,9 +6,11 @@
 #include <cstdlib>
 #include <string>
 #include <chrono>
+#include <algorithm>
 
 int main(int argc, char* argv[]) {
     std::string instance_name = "m6c6"; // default
+    double heuristic_time_limit = -1.0;
     if (argc > 1) {
         instance_name = argv[1];
     }
@@ -17,6 +19,9 @@ int main(int argc, char* argv[]) {
     }
     if (argc > 3) {
         GLOBAL_GEOM.independent_mode = (std::stoi(argv[3]) != 0);
+    }
+    if (argc > 4) {
+        heuristic_time_limit = std::stod(argv[4]);
     }
 
     Problem p;
@@ -43,6 +48,14 @@ int main(int argc, char* argv[]) {
         p.Summarize(out_dir);
         result->Summarize(&p, out_dir);
         result->GenerateColumnCSV(&p, out_dir);
+
+        if (heuristic_time_limit > 0.0) {
+            const double remaining = std::max(0.0, heuristic_time_limit - bi_duration);
+            Config::timelimit = remaining;
+            Config::non_improve_timelimit = std::min(Config::non_improve_timelimit, remaining);
+            std::cout << "\tHeuristic total time limit: " << heuristic_time_limit
+                      << " s | Remaining VNS time limit: " << remaining << " s" << std::endl;
+        }
 
         VNS V;
         // Standard VNS often runs for 500-2000 iterations without improvement

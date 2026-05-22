@@ -81,6 +81,47 @@ private:
     }
     
     void build_layer(bool is_upper, const std::vector<double>& heights, int num_splits, bool indep) {
+        double central_len = is_upper ? deck_m_groove_length : floor_groove_length;
+        double central_start_x = center_x - central_len / 2.0;
+        std::vector<DynamicSegment>& blocks = is_upper ? upper_blocks : lower_blocks;
+        std::vector<DynamicInterval>& intervals = is_upper ? upper_intervals : lower_intervals;
+
+        auto build_intervals = [&]() {
+            intervals.clear();
+            int N = blocks.size() - 1;
+            for (int l = 0; l <= N; ++l) {
+                for (int r = 0; r <= N; ++r) {
+                    double mod = Config::safety_clearance_delta;
+                    if (l == N && r == N) mod = -Config::safety_clearance_delta;
+                    else if (l == N || r == N) mod = 0.0;
+
+                    double cap = blocks[0].length + mod;
+                    for (int i=1; i<=l; ++i) cap += blocks[i].length;
+                    for (int i=1; i<=r; ++i) cap += blocks[i].length;
+                    intervals.push_back({l, r, cap});
+                }
+            }
+        };
+
+        if (!indep) {
+            int fixed_blocks = std::max(1, num_splits);
+            blocks.clear();
+            blocks.push_back({central_len, get_clearance(center_x, is_upper, false), get_clearance(center_x, is_upper, true)});
+
+            std::vector<double> cut_points;
+            for (int i = 0; i <= fixed_blocks; ++i) {
+                cut_points.push_back(central_start_x * static_cast<double>(i) / static_cast<double>(fixed_blocks));
+            }
+            for (int i = cut_points.size() - 1; i > 0; --i) {
+                double rx = cut_points[i];
+                double lx = cut_points[i-1];
+                if (rx - lx <= 0.01) continue;
+                blocks.push_back({rx - lx, get_clearance(lx, is_upper, false), get_clearance(lx, is_upper, true)});
+            }
+            build_intervals();
+            return;
+        }
+
         std::set<double> unique_h(heights.begin(), heights.end());
         std::vector<double> h_vec(unique_h.begin(), unique_h.end());
         std::sort(h_vec.begin(), h_vec.end());
@@ -98,9 +139,6 @@ private:
             sel_h = h_vec;
         }
         
-        double central_len = is_upper ? deck_m_groove_length : floor_groove_length;
-        double central_start_x = center_x - central_len / 2.0;
-        
         std::vector<double> cut_points = {0.0, central_start_x};
         for (double h : sel_h) {
             double x_h = solve_x(h, is_upper, false);
@@ -115,7 +153,6 @@ private:
         auto last = std::unique(cut_points.begin(), cut_points.end(), [](double a, double b){ return std::abs(a-b)<0.01; });
         cut_points.erase(last, cut_points.end());
         
-        std::vector<DynamicSegment>& blocks = is_upper ? upper_blocks : lower_blocks;
         blocks.clear();
         
         blocks.push_back({central_len, get_clearance(center_x, is_upper, false), get_clearance(center_x, is_upper, true)});
@@ -127,22 +164,7 @@ private:
             blocks.push_back({rx - lx, get_clearance(lx, is_upper, false), get_clearance(lx, is_upper, true)});
         }
         
-        // Build intervals
-        std::vector<DynamicInterval>& intervals = is_upper ? upper_intervals : lower_intervals;
-        intervals.clear();
-        int N = blocks.size() - 1;
-        for (int l = 0; l <= N; ++l) {
-            for (int r = 0; r <= N; ++r) {
-                double mod = 400.0;
-                if (l == N && r == N) mod = -400.0;
-                else if (l == N || r == N) mod = 0.0;
-                
-                double cap = blocks[0].length + mod;
-                for (int i=1; i<=l; ++i) cap += blocks[i].length;
-                for (int i=1; i<=r; ++i) cap += blocks[i].length;
-                intervals.push_back({l, r, cap});
-            }
-        }
+        build_intervals();
     }
 
 public:

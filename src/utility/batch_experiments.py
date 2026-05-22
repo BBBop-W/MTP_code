@@ -52,7 +52,7 @@ SEED_IDS = [1, 2]
 DEFAULT_NUM_SPLITS = 3
 DEFAULT_INDEP_MODE = False
 DEFAULT_TIME_LIMIT = 3600.0
-DEFAULT_MIP_GAP = 0.0
+DEFAULT_MIP_GAP = 0.0001
 POST_SOLVE_GRACE_SEC = 600.0
 DEFAULT_PROFILE_GENERATOR_MODE = "gr"
 
@@ -639,13 +639,13 @@ def run_plan(
                 if max_runs is not None and completed >= max_runs:
                     break
 
-        if skip_heuristics and warmstart_requested and not warmstart_available:
-            print(
-                f"[skip] {row.instance_id} warmstart files missing; running without warmstart",
-                flush=True,
-            )
-
         warmstart_available = bi_json.exists() and vns_json.exists()
+        if warmstart_needed and not warmstart_available:
+            missing = [str(path) for path in (bi_json, vns_json) if not path.exists()]
+            raise RuntimeError(
+                f"{row.instance_id}: warmstart files missing after heuristic step; "
+                f"refusing to run warmstart-dependent BPC without warmstart. Missing: {missing}"
+            )
         warmstart_enabled = warmstart_requested and warmstart_available
 
         gurobi_run_id = f"gurobi_{row.instance_id}"
@@ -970,79 +970,6 @@ def run_plan(
             if max_runs is not None and completed >= max_runs:
                 break
 
-        bpc_comp_label_no_ws_id = f"bpc_compartment_label_no_ws_no_cut_{row.instance_id}"
-        if should_run(bpc_comp_label_no_ws_id):
-            payload = {
-                "instance_dir": str(instance_dir),
-                "output_root": str(result_root / "bpc_compartment_label_no_ws_no_cut"),
-                "pricing_method": "labeling",
-                "use_warmstart": False,
-                "use_cuts": False,
-                "bi_json": str(bi_json),
-                "vns_json": str(vns_json),
-                "num_splits": num_splits,
-                "independent_mode_split": independent_mode_split,
-                "time_limit": time_limit,
-                "mip_gap_tol": mip_gap,
-                "threads": 1,
-                "profile_generator_mode": "ex",
-                "use_dominance": False,
-                "use_rc_bound": False,
-                "use_height_order": False,
-                "use_local_residual_skyline": False,
-                "max_columns_per_subproblem": Config.max_compartment_pricing_columns_per_subproblem,
-            }
-            summary = solve_with_watchdog(bpc_compartment_worker, payload, time_limit, POST_SOLVE_GRACE_SEC)
-            record = {
-                "run_id": bpc_comp_label_no_ws_id,
-                "method": "bpc_compartment_label_no_ws_no_cut",
-                "family": "bpc_compartment",
-                "pricing_method": "labeling",
-                "use_warmstart": False,
-                "use_cuts": False,
-                "acceleration_profile": "plain_no_warmstart_no_cuts",
-                "profile_generator_mode": "ex",
-                "instance_id": row.instance_id,
-                "instance_name": row.instance_name,
-                "problem_scale": base.scale,
-                "num_types_I": base.num_types,
-                "num_wagons_J": base.num_wagons,
-                "seed_id": base.seed_id,
-                "seed": base.seed,
-                "replicate_id": base.seed_id,
-                "num_splits": num_splits,
-                "independent_mode_split": independent_mode_split,
-                "time_limit": time_limit,
-                "mip_gap_target": mip_gap,
-                "status": summary.get("status"),
-                "objective": summary.get("objective"),
-                "loaded_length_mm": summary.get("loaded_length_mm"),
-                "runtime_sec": summary.get("runtime_sec"),
-                "nodes": summary.get("explored_nodes"),
-                "generated_columns": summary.get("generated_columns"),
-                "gap": summary.get("gap"),
-                "best_bound": summary.get("best_bound"),
-                "master_time": summary.get("master_time"),
-                "pricing_time": summary.get("pricing_time"),
-                "labeling_time": summary.get("labeling_time"),
-                "feasibility_time": summary.get("feasibility_time"),
-                "subproblem_solver_time": summary.get("subproblem_solver_time"),
-                "subproblem_solver_nodes": summary.get("subproblem_solver_nodes"),
-                "labels_feasible": summary.get("labels_feasible"),
-                "labels_pruned_by_bound": summary.get("labels_pruned_by_bound"),
-                "labels_pruned_by_dominance": summary.get("labels_pruned_by_dominance"),
-                "labels_pruned_by_local_skyline": summary.get("labels_pruned_by_local_skyline"),
-                "labels_after_dominance": summary.get("labels_after_dominance"),
-                "reachability_probes": summary.get("reachability_probes"),
-                "result_dir": str(result_root / "bpc_compartment_label_no_ws_no_cut" / row.instance_id),
-                "runner_status": summary.get("runner_status"),
-            }
-            append_result(results_path, record)
-            seen_run_ids.add(bpc_comp_label_no_ws_id)
-            completed += 1
-            if max_runs is not None and completed >= max_runs:
-                break
-
         if max_runs is not None and completed >= max_runs:
             break
 
@@ -1057,6 +984,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-splits", type=int, default=DEFAULT_NUM_SPLITS)
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=DEFAULT_INDEP_MODE)
     parser.add_argument("--time-limit", type=float, default=DEFAULT_TIME_LIMIT)
+    parser.add_argument("--mip-gap", type=float, default=DEFAULT_MIP_GAP)
     parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
     parser.add_argument("--skip-heuristics", action="store_true", help="Skip BI/VNS runs.")
     parser.add_argument("--no-warmstart", action="store_true", help="Disable warmstart columns for BPC runs.")
@@ -1104,7 +1032,7 @@ def main() -> None:
             num_splits=args.num_splits,
             independent_mode_split=args.independent_mode_split,
             time_limit=args.time_limit,
-            mip_gap=DEFAULT_MIP_GAP,
+            mip_gap=args.mip_gap,
             profile_generator_mode=args.profile_generator_mode,
             skip_existing=not args.no_skip_existing,
             max_runs=args.max_runs,

@@ -118,6 +118,7 @@ public:
             
             Solution shaken;
             shaken.copy_construct(incumbent);
+            incumbent.SyncProblemState(p);
             
             // Dynamic strength based on nonImprove to diversify more when stuck
             int strength = 1 + (nonImprove / 10); 
@@ -133,12 +134,15 @@ public:
                         std::cout << "\tIter " << total_iters << " | New Global Best VNS_Obj: " << global_best.obj << " | Actual Length: " << global_best.actual_length << std::endl;
                     } else {
                         nonImprove++;
+                        incumbent.SyncProblemState(p);
                     }
                 } else {
                     nonImprove++;
+                    incumbent.SyncProblemState(p);
                 }
             } else {
                 nonImprove++;
+                incumbent.SyncProblemState(p);
             }
             
             if (total_iters % 100 == 0) {
@@ -149,6 +153,7 @@ public:
         double final_duration = std::chrono::duration<double>(final_toc - tic).count();
 
         result.copy_construct(global_best);
+        result.SyncProblemState(p);
         std::cout << "\n\t==============================" << std::endl;
         std::cout << "\tEnd VNS Optimization!" << std::endl;
         std::cout << "\tBest VNS Objective: " << result.obj << std::endl;

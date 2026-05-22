@@ -1,0 +1,6 @@
+*.o
+*.solver.o
+*.d
+*.solver.d
+bpc_label_smoke
+bpc_label_solver

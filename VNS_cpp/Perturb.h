@@ -56,30 +56,14 @@ bool RuinRebuild(Solution& result, int strength, Problem* p) {
         if (removed >= num_remove) break;
     }
 
-    // 3. Re-insert using BestInsert
+    // 3. Repair the partial solution using BestInsert.
     BestInsert bi;
-    if (bi.Construct(result, p)) {
+    if (bi.RepairRemaining(result, p)) {
         return true;
     }
 
     // If it fails to insert all mandatory vehicles, revert
     result.copy_construct(old);
-    // Revert vehicle states to match the old solution
-    for (auto& v : p->vehicle) {
-        v.var_mandatory = v.num_mandatory;
-        v.var_optional = v.num_optional;
-    }
-    for (int i = 0; i < old.carriage_num; ++i) {
-        for (int f : {0, 1}) {
-            for (int v_id : old.carriage[i].route[f]) {
-                Vehicle* v = p->GetVehicle(v_id);
-                if (v->var_mandatory > 0) {
-                    v->var_mandatory--;
-                } else {
-                    v->var_optional--;
-                }
-            }
-        }
-    }
+    old.SyncProblemState(p);
     return false;
 }
