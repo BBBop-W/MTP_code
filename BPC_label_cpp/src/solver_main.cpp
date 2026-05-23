@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "bpc_label/BpcSolver.hpp"
 #include "bpc_label/InstanceIO.hpp"
@@ -27,6 +29,7 @@ void print_usage() {
     std::cout
         << "Usage: bpc_label_solver --instance DIR --method wagon|compartment [options]\n"
         << "Options:\n"
+        << "  --diagnose-structural-chain\n"
         << "  --max-nodes N\n"
         << "  --max-cg-iters N\n"
         << "  --max-columns-per-pricing N\n"
@@ -49,6 +52,103 @@ void print_usage() {
         << "  --quiet\n";
 }
 
+void print_int_array(const std::vector<int>& values) {
+    std::cout << "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            std::cout << ", ";
+        }
+        std::cout << values[i];
+    }
+    std::cout << "]";
+}
+
+void print_structural_chain_diagnostics(
+    const InstanceData& instance,
+    const PricingOptions& pricing_options
+) {
+    std::vector<StructuralChainDiagnostic> diagnostics;
+    for (DeckMode deck : compartment_deck_order()) {
+        for (CompartmentKind compartment : {CompartmentKind::Upper, CompartmentKind::Lower}) {
+            auto spec = make_compartment_spec(
+                compartment,
+                deck,
+                instance.car_types,
+                instance.lengths,
+                instance.heights,
+                instance.upper_bounds,
+                pricing_options.num_splits,
+                pricing_options.independent_mode_split,
+                pricing_options.labeling.max_units_per_type
+            );
+            diagnostics.push_back(diagnose_structural_chain(spec, pricing_options.labeling));
+        }
+    }
+
+    std::size_t min_ordered = instance.car_types.empty() ? 0 : instance.car_types.size();
+    std::size_t max_ordered = 0;
+    std::size_t ordered_quantity_sum = 0;
+    std::size_t total_quantity_sum = 0;
+    bool all_full = !diagnostics.empty();
+    for (const auto& item : diagnostics) {
+        min_ordered = std::min(min_ordered, item.ordered_type_indices.size());
+        max_ordered = std::max(max_ordered, item.ordered_type_indices.size());
+        ordered_quantity_sum += item.ordered_quantity_sum;
+        total_quantity_sum += item.total_quantity_sum;
+        all_full = all_full && item.d2_full_certificate;
+    }
+
+    std::cout << "{\n"
+              << "  \"diagnostic\": \"structural_chain\",\n"
+              << "  \"profile_generator_mode\": \""
+              << pricing_options.labeling.profile_generator_mode << "\",\n"
+              << "  \"residual_profile_mode\": \""
+              << pricing_options.labeling.residual_profile_mode << "\",\n"
+              << "  \"num_splits\": " << pricing_options.num_splits << ",\n"
+              << "  \"independent_mode_split\": "
+              << (pricing_options.independent_mode_split ? "true" : "false") << ",\n"
+              << "  \"type_count\": " << instance.car_types.size() << ",\n"
+              << "  \"min_ordered_type_count\": " << min_ordered << ",\n"
+              << "  \"max_ordered_type_count\": " << max_ordered << ",\n"
+              << "  \"ordered_quantity_sum\": " << ordered_quantity_sum << ",\n"
+              << "  \"total_quantity_sum\": " << total_quantity_sum << ",\n"
+              << "  \"all_subproblems_full_certificate\": "
+              << (all_full ? "true" : "false") << ",\n"
+              << "  \"subproblems\": [\n";
+    for (std::size_t i = 0; i < diagnostics.size(); ++i) {
+        const auto& item = diagnostics[i];
+        std::cout << "    {\n"
+                  << "      \"deck\": \"" << deck_name(item.deck) << "\",\n"
+                  << "      \"compartment\": \""
+                  << (item.compartment == CompartmentKind::Upper ? "upper" : "lower") << "\",\n"
+                  << "      \"ordered_type_count\": " << item.ordered_type_indices.size() << ",\n"
+                  << "      \"type_count\": " << item.type_count << ",\n"
+                  << "      \"ordered_type_indices\": ";
+        print_int_array(item.ordered_type_indices);
+        std::cout << ",\n"
+                  << "      \"ordered_type_ids\": ";
+        print_int_array(item.ordered_type_ids);
+        std::cout << ",\n"
+                  << "      \"search_order_indices\": ";
+        print_int_array(item.search_order_indices);
+        std::cout << ",\n"
+                  << "      \"search_order_type_ids\": ";
+        print_int_array(item.search_order_type_ids);
+        std::cout << ",\n"
+                  << "      \"ordered_quantity_sum\": " << item.ordered_quantity_sum << ",\n"
+                  << "      \"total_quantity_sum\": " << item.total_quantity_sum << ",\n"
+                  << "      \"d2_full_certificate\": "
+                  << (item.d2_full_certificate ? "true" : "false") << "\n"
+                  << "    }";
+        if (i + 1 < diagnostics.size()) {
+            std::cout << ",";
+        }
+        std::cout << "\n";
+    }
+    std::cout << "  ]\n"
+              << "}\n";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -66,12 +166,15 @@ int main(int argc, char** argv) {
         options.pricing.labeling.use_local_d1_pruning = true;
         bool user_set_rc_bound = false;
         bool user_set_max_columns = false;
+        bool diagnose_structural_chain = false;
 
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
                 print_usage();
                 return 0;
+            } else if (arg == "--diagnose-structural-chain") {
+                diagnose_structural_chain = true;
             } else if (arg == "--instance") {
                 instance_dir = arg_value(i, argc, argv);
             } else if (arg == "--method") {
@@ -152,6 +255,10 @@ int main(int argc, char** argv) {
         options.pricing.labeling.use_cuts = options.use_cuts;
 
         InstanceData instance = load_instance(instance_dir);
+        if (diagnose_structural_chain) {
+            print_structural_chain_diagnostics(instance, options.pricing);
+            return 0;
+        }
         BpcSolver solver(instance, options);
         BpcResult result = solver.solve();
 
@@ -167,6 +274,7 @@ int main(int argc, char** argv) {
                   << (options.pricing.labeling.use_local_d1_pruning ? "true" : "false") << ",\n"
                   << "  \"use_rc_bound\": "
                   << (options.pricing.labeling.use_rc_bound ? "true" : "false") << ",\n"
+                  << "  \"safety_clearance_delta\": " << Config::safety_clearance_delta << ",\n"
                   << "  \"threads\": " << options.threads << ",\n"
                   << "  \"has_incumbent\": " << (result.has_incumbent ? "true" : "false") << ",\n"
                   << "  \"best_objective\": " << (result.has_incumbent ? result.best_objective : 0.0) << ",\n"

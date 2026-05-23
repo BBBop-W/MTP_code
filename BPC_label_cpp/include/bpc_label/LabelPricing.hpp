@@ -110,6 +110,22 @@ struct CompartmentPattern {
     double best_length = 0.0;
 };
 
+struct StructuralChainDiagnostic {
+    std::string compartment_id;
+    CompartmentKind compartment = CompartmentKind::Lower;
+    DeckMode deck = DeckMode::HH;
+    std::string profile_generator_mode;
+    std::string residual_profile_mode;
+    std::size_t type_count = 0;
+    std::vector<int> ordered_type_indices;
+    std::vector<int> ordered_type_ids;
+    std::vector<int> search_order_indices;
+    std::vector<int> search_order_type_ids;
+    std::size_t ordered_quantity_sum = 0;
+    std::size_t total_quantity_sum = 0;
+    bool d2_full_certificate = false;
+};
+
 ResourceModel build_compartment_resource_model(
     const CompartmentSpec& spec,
     const std::string& interval_profile
@@ -128,6 +144,11 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
     const LabelingOptions& options,
     const CutConfig* cuts,
     LabelingStats* stats
+);
+
+StructuralChainDiagnostic diagnose_structural_chain(
+    const CompartmentSpec& spec,
+    const LabelingOptions& options
 );
 
 CompartmentSpec make_compartment_spec(

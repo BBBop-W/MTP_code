@@ -1395,6 +1395,59 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
     return patterns;
 }
 
+StructuralChainDiagnostic diagnose_structural_chain(
+    const CompartmentSpec& spec,
+    const LabelingOptions& options
+) {
+    ResourceModel resource_model = build_compartment_resource_model_impl(
+        spec,
+        options.residual_profile_mode,
+        options
+    );
+    const GeneratorMode generator_mode = parse_generator_mode(options.profile_generator_mode);
+    std::vector<bool> ordered_type_mask;
+    const std::vector<int> search_order = article_search_order(
+        spec,
+        resource_model,
+        options.use_height_order,
+        generator_mode,
+        options.eps,
+        ordered_type_mask
+    );
+
+    StructuralChainDiagnostic diagnostic;
+    diagnostic.compartment_id = spec.compartment_id;
+    diagnostic.compartment = spec.compartment;
+    diagnostic.deck = spec.deck;
+    diagnostic.profile_generator_mode = options.profile_generator_mode;
+    diagnostic.residual_profile_mode = options.residual_profile_mode;
+    diagnostic.type_count = spec.car_types.size();
+
+    for (int idx_int : search_order) {
+        const std::size_t idx = static_cast<std::size_t>(idx_int);
+        diagnostic.search_order_indices.push_back(idx_int);
+        diagnostic.search_order_type_ids.push_back(spec.car_types[idx]);
+        if (idx < ordered_type_mask.size() && ordered_type_mask[idx]) {
+            diagnostic.ordered_type_indices.push_back(idx_int);
+            diagnostic.ordered_type_ids.push_back(spec.car_types[idx]);
+        }
+    }
+
+    for (std::size_t idx = 0; idx < spec.car_types.size(); ++idx) {
+        const int max_q = std::max(0, std::min(
+            options.max_units_per_type,
+            at_or_default(spec.max_quantity_by_type, idx, options.max_units_per_type)
+        ));
+        diagnostic.total_quantity_sum += static_cast<std::size_t>(max_q);
+        if (idx < ordered_type_mask.size() && ordered_type_mask[idx]) {
+            diagnostic.ordered_quantity_sum += static_cast<std::size_t>(max_q);
+        }
+    }
+    diagnostic.d2_full_certificate =
+        diagnostic.ordered_type_indices.size() == spec.car_types.size();
+    return diagnostic;
+}
+
 CompartmentSpec make_compartment_spec(
     CompartmentKind compartment,
     DeckMode deck,

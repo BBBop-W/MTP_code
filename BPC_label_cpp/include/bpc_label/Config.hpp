@@ -13,7 +13,7 @@ struct Config {
     // Nonpositive values mean "unlimited" for label-pricing column updates.
     static constexpr int max_wagon_pricing_columns = 0;
     static constexpr int max_compartment_pricing_columns_per_subproblem = 0;
-    static constexpr double safety_clearance_delta = 50.0;
+    static constexpr double safety_clearance_delta = 400.0;
 
     static constexpr double A_len = 4300.0;
     static constexpr double B_len = 2000.0;

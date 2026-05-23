@@ -24,6 +24,9 @@ from typing import Any, Dict, List
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INSTANCE_ROOT = PROJECT_ROOT / "data" / "Instance"
 RESULT_ROOT = PROJECT_ROOT / "result"
+DESKTOP_INSTANCE_ROOT = Path("/Users/songtaowang/Desktop/MTP_code/data/Instance")
+DEFAULT_BATCH_TAG = "batch_2026-05-21"
+SAFETY_CLEARANCE_DELTA_MM = 400.0
 POST_SOLVE_GRACE_SEC = 600.0
 
 CASES = [
@@ -77,6 +80,8 @@ RESULT_COLUMNS = [
     "threads",
     "time_limit",
     "mip_gap_target",
+    "safety_clearance_delta_mm",
+    "instance_root",
     "status",
     "loaded_length_mm",
     "runtime_sec",
@@ -173,6 +178,10 @@ def resolve_path(path: str | Path) -> Path:
     return out if out.is_absolute() else PROJECT_ROOT / out
 
 
+def default_instance_root() -> Path:
+    return DESKTOP_INSTANCE_ROOT if DESKTOP_INSTANCE_ROOT.exists() else INSTANCE_ROOT
+
+
 def default_bpc_exe() -> Path:
     exe = "bpc_label_solver.exe" if os.name == "nt" else "bpc_label_solver"
     return PROJECT_ROOT / "BPC_label_cpp" / exe
@@ -183,13 +192,41 @@ def default_vns_exe() -> Path:
     return PROJECT_ROOT / "VNS_cpp" / exe
 
 
-def case_metadata(case_id: str, batch_tag: str) -> Dict[str, Any]:
+def ensure_vns_instance_link(args: argparse.Namespace) -> None:
+    source_batch = resolve_path(args.instance_root) / args.batch_tag
+    if not source_batch.exists():
+        raise FileNotFoundError(f"Instance batch directory not found: {source_batch}")
+
+    local_batch = INSTANCE_ROOT / args.batch_tag
+    if local_batch.exists():
+        if local_batch.resolve() != source_batch.resolve():
+            raise FileExistsError(
+                f"{local_batch} already exists and does not point to {source_batch}. "
+                "Use a different --batch-tag or update the local data/Instance link."
+            )
+        return
+
+    local_batch.parent.mkdir(parents=True, exist_ok=True)
+    local_batch.symlink_to(source_batch, target_is_directory=True)
+
+
+def validate_cases(args: argparse.Namespace) -> None:
+    source_batch = resolve_path(args.instance_root) / args.batch_tag
+    missing = [case_id for case_id in args.cases if not (source_batch / case_id).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Missing {len(missing)} case directories under {source_batch}: {', '.join(missing)}"
+        )
+
+
+def case_metadata(case_id: str, batch_tag: str, instance_root: Path) -> Dict[str, Any]:
     match = re.match(r"(?P<scale>[^_]+)_I(?P<I>\d+)_J(?P<J>\d+)_R(?P<R>\d+)$", case_id)
     if not match:
         raise ValueError(f"Unexpected case id: {case_id}")
     return {
         "instance_id": case_id,
         "instance_name": f"{batch_tag}/{case_id}",
+        "instance_root": instance_root,
         "problem_scale": match.group("scale"),
         "num_types_I": int(match.group("I")),
         "num_wagons_J": int(match.group("J")),
@@ -298,7 +335,8 @@ def run_method(
     if not exe.exists():
         raise FileNotFoundError(f"BPC executable not found: {exe}")
 
-    instance_dir = INSTANCE_ROOT / args.batch_tag / case_id
+    instance_root = resolve_path(args.instance_root)
+    instance_dir = instance_root / args.batch_tag / case_id
     if not instance_dir.exists():
         raise FileNotFoundError(f"Instance directory not found: {instance_dir}")
 
@@ -389,7 +427,7 @@ def run_method(
         runner_status = "exception"
         stderr = repr(exc)
 
-    meta = case_metadata(case_id, args.batch_tag)
+    meta = case_metadata(case_id, args.batch_tag, instance_root)
     record: Dict[str, Any] = {
         **meta,
         "run_id": f"{method_name}_{case_id}",
@@ -400,6 +438,7 @@ def run_method(
         "threads": args.threads,
         "time_limit": args.time_limit,
         "mip_gap_target": args.mip_gap,
+        "safety_clearance_delta_mm": payload.get("safety_clearance_delta", SAFETY_CLEARANCE_DELTA_MM),
         "status": status,
         "loaded_length_mm": payload.get("loaded_length_mm"),
         "runtime_sec": payload.get("wall_time", wall),
@@ -480,11 +519,12 @@ def run_case(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run selected D1/D3 compartment-label BPC cases.")
-    parser.add_argument("--batch-tag", default="batch_2026-05-19")
+    parser.add_argument("--batch-tag", default=DEFAULT_BATCH_TAG)
+    parser.add_argument("--instance-root", type=Path, default=default_instance_root())
     parser.add_argument("--cases", nargs="+", default=CASES)
     parser.add_argument("--methods", nargs="+", choices=sorted(METHODS), default=sorted(METHODS))
     parser.add_argument("--result-tag", default=date.today().isoformat())
-    parser.add_argument("--result-suffix", default="selected_d1_d3")
+    parser.add_argument("--result-suffix", default="selected_d1_d3_delta400")
     parser.add_argument("--num-splits", type=int, default=3)
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--threads", type=int, default=1)
@@ -506,6 +546,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    ensure_vns_instance_link(args)
+    validate_cases(args)
     output_root = RESULT_ROOT / f"{args.batch_tag}_{args.result_suffix}_{args.result_tag}"
     results_path = output_root / f"d1_d3_results_{args.result_tag}.csv"
     seen = load_existing_run_ids(results_path)

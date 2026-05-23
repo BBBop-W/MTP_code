@@ -9,7 +9,7 @@ class config:
     max_wagon_pricing_columns = 20
     max_compartment_pricing_columns_per_subproblem = 20
     gurobi_threads = 1
-    safety_clearance_delta = 50.0
+    safety_clearance_delta = 400.0
 
     @classmethod
     def apply_gurobi_params(cls, model):
