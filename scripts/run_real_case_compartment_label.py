@@ -54,6 +54,14 @@ SUMMARY_COLUMNS = [
     "explored_nodes",
     "generated_columns",
     "total_columns",
+    "generated_subpatterns",
+    "labels_generated_raw",
+    "labels_feasible",
+    "labels_pruned_by_bound",
+    "labels_pruned_by_dominance",
+    "labels_pruned_total",
+    "labels_after_dominance",
+    "labels_avoided_by_d2",
     "warmstart_time_limit_sec",
     "bpc_time_limit_sec",
     "bi_runtime_sec",
@@ -270,6 +278,14 @@ def build_result_row(case_id: str, metrics: dict[str, Any], warmstart: dict[str,
             "explored_nodes": payload.get("explored_nodes", ""),
             "generated_columns": payload.get("generated_columns", ""),
             "total_columns": payload.get("total_columns", ""),
+            "generated_subpatterns": payload.get("generated_subpatterns", ""),
+            "labels_generated_raw": payload.get("labels_generated_raw", ""),
+            "labels_feasible": payload.get("labels_feasible", ""),
+            "labels_pruned_by_bound": payload.get("labels_pruned_by_bound", ""),
+            "labels_pruned_by_dominance": payload.get("labels_pruned_by_dominance", ""),
+            "labels_pruned_total": payload.get("labels_pruned_total", ""),
+            "labels_after_dominance": payload.get("labels_after_dominance", ""),
+            "labels_avoided_by_d2": payload.get("labels_avoided_by_d2", ""),
             "warmstart_time_limit_sec": "unlimited" if args.vns_time_limit is None else args.vns_time_limit,
             "bpc_time_limit_sec": args.bpc_time_limit,
             "bi_runtime_sec": warmstart.get("bi_runtime_sec", ""),
@@ -307,7 +323,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-splits", type=int, default=3)
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--use-cuts", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default="hyb")
+    parser.add_argument("--profile-generator-mode", choices=["ex", "d2", "hyb"], default="hyb")
     parser.add_argument("--residual-profile-mode", choices=["full", "fans_diag"], default="full")
     parser.add_argument("--max-nodes", type=int, default=5000)
     parser.add_argument("--max-cg-iters", type=int, default=3000)

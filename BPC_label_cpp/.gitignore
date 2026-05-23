@@ -4,3 +4,4 @@
 *.solver.d
 bpc_label_smoke
 bpc_label_solver
+*.exe

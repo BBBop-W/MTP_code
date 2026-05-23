@@ -138,7 +138,7 @@ def build_and_solve(
             h_h_limits[h_name] = block["h_h"]
             h_m_limits[h_name] = block["h_m"]
 
-    Delta = 400.0
+    Delta = float(Config.safety_clearance_delta)
     N = 10
 
     def height_limit(h: str, side_mode: str) -> float:

@@ -66,8 +66,7 @@ int main() {
     std::cout << "  labels_raw=" << compartment_stats.labeling_stats.labels_generated_raw
               << " labels_feasible=" << compartment_stats.labeling_stats.labels_feasible
               << " dominated=" << compartment_stats.labeling_stats.labels_pruned_by_dominance
-              << " order_pruned=" << compartment_stats.labeling_stats.labels_pruned_by_order
-              << " order_avoided=" << compartment_stats.labeling_stats.labels_avoided_by_order
+              << " d2_avoided=" << compartment_stats.labeling_stats.labels_avoided_by_d2
               << "\n";
 
     PricingStats wagon_stats;
@@ -77,8 +76,7 @@ int main() {
               << " merge_pairs=" << wagon_stats.merge_attempt_pairs
               << " labels_raw=" << wagon_stats.labeling_stats.labels_generated_raw
               << " labels_feasible=" << wagon_stats.labeling_stats.labels_feasible
-              << " order_pruned=" << wagon_stats.labeling_stats.labels_pruned_by_order
-              << " order_avoided=" << wagon_stats.labeling_stats.labels_avoided_by_order
+              << " d2_avoided=" << wagon_stats.labeling_stats.labels_avoided_by_d2
               << "\n";
 
     return 0;

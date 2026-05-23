@@ -268,7 +268,7 @@ def main() -> None:
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-cuts", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--pricing-backend", default="label", choices=["label", "solver"])
-    parser.add_argument("--profile-generator-mode", default="hyb", choices=["ex", "gr", "hyb"])
+    parser.add_argument("--profile-generator-mode", default="hyb", choices=["ex", "d2", "hyb"])
     parser.add_argument("--residual-profile-mode", default="full", choices=["full", "fans_diag"])
     parser.add_argument("--warmstart-json", action="append", default=[])
     parser.add_argument("--warmstart-source", default="heuristic", choices=["heuristic", "none"])
@@ -310,6 +310,14 @@ def main() -> None:
         "wall_time",
         "explored_nodes",
         "generated_columns",
+        "generated_subpatterns",
+        "labels_generated_raw",
+        "labels_feasible",
+        "labels_pruned_by_bound",
+        "labels_pruned_by_dominance",
+        "labels_pruned_total",
+        "labels_after_dominance",
+        "labels_avoided_by_d2",
         "warmstart_added",
         "threads",
     ]

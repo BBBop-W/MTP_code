@@ -45,8 +45,11 @@ double remaining_time(double deadline) {
     return std::max(0.0, deadline - monotonic_seconds());
 }
 
-void configure_pricing_model(GRBModel& model, double deadline) {
+void configure_pricing_model(GRBModel& model, double deadline, int threads) {
     model.set(GRB_IntParam_OutputFlag, 0);
+    if (threads > 0) {
+        model.set(GRB_IntParam_Threads, threads);
+    }
     const double rem = remaining_time(deadline);
     if (rem > 0.0 && rem < INF / 2.0) {
         model.set(GRB_DoubleParam_TimeLimit, rem);
@@ -191,7 +194,7 @@ CompartmentMipResult solve_compartment_mip(
     env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model(env);
-    configure_pricing_model(model, options.labeling.deadline);
+    configure_pricing_model(model, options.labeling.deadline, options.threads);
 
     const int n = static_cast<int>(master.car_types.size());
     const int big_m = 2 * Config::max_units_per_compartment + 1;
@@ -377,7 +380,7 @@ void add_resource_constraints(
     env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model(env);
-    configure_pricing_model(model, options.labeling.deadline);
+    configure_pricing_model(model, options.labeling.deadline, options.threads);
 
     const int n = static_cast<int>(master.car_types.size());
     const int big_m = 2 * Config::max_units_per_compartment + 1;
@@ -481,7 +484,7 @@ WagonMipResult solve_full_wagon_mip(
     env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model(env);
-    configure_pricing_model(model, options.labeling.deadline);
+    configure_pricing_model(model, options.labeling.deadline, options.threads);
 
     const int n = static_cast<int>(master.car_types.size());
     const int big_m = 2 * Config::max_units_per_compartment + 1;

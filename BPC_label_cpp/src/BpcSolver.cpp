@@ -55,8 +55,11 @@ bool acceptable_status(int status, const GRBModel& model) {
     return false;
 }
 
-void configure_model(GRBModel& model, double time_limit, bool log_to_console) {
+void configure_model(GRBModel& model, double time_limit, int threads, bool log_to_console) {
     model.set(GRB_IntParam_OutputFlag, log_to_console ? 1 : 0);
+    if (threads > 0) {
+        model.set(GRB_IntParam_Threads, threads);
+    }
     if (time_limit > 0.0 && time_limit < INF / 2.0) {
         model.set(GRB_DoubleParam_TimeLimit, time_limit);
     }
@@ -79,10 +82,16 @@ void accumulate_pricing_stats(PricingStats& dst, const PricingStats& src) {
     dst.labeling_stats.labels_feasible += src.labeling_stats.labels_feasible;
     dst.labeling_stats.labels_pruned_by_bound += src.labeling_stats.labels_pruned_by_bound;
     dst.labeling_stats.labels_pruned_by_dominance += src.labeling_stats.labels_pruned_by_dominance;
-    dst.labeling_stats.labels_pruned_by_order += src.labeling_stats.labels_pruned_by_order;
     dst.labeling_stats.labels_after_dominance += src.labeling_stats.labels_after_dominance;
-    dst.labeling_stats.placements_skipped_by_order += src.labeling_stats.placements_skipped_by_order;
-    dst.labeling_stats.labels_avoided_by_order += src.labeling_stats.labels_avoided_by_order;
+    dst.labeling_stats.labels_avoided_by_d2 += src.labeling_stats.labels_avoided_by_d2;
+    dst.labeling_stats.hybrid_calls += src.labeling_stats.hybrid_calls;
+    dst.labeling_stats.hybrid_ordered_type_sum += src.labeling_stats.hybrid_ordered_type_sum;
+    dst.labeling_stats.hybrid_ordered_type_max = std::max(
+        dst.labeling_stats.hybrid_ordered_type_max,
+        src.labeling_stats.hybrid_ordered_type_max
+    );
+    dst.labeling_stats.hybrid_ordered_quantity_sum += src.labeling_stats.hybrid_ordered_quantity_sum;
+    dst.labeling_stats.hybrid_total_quantity_sum += src.labeling_stats.hybrid_total_quantity_sum;
 }
 
 int sr_coeff_for_column(
@@ -200,13 +209,14 @@ MasterLPSolution MasterProblem::solve_lp(
     const std::set<std::array<int, 3>>& active_sr_cuts,
     bool use_capacity_cut,
     double time_limit,
+    int threads,
     bool log_to_console
 ) const {
     GRBEnv env(true);
     env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model(env);
-    configure_model(model, time_limit, log_to_console);
+    configure_model(model, time_limit, threads, log_to_console);
 
     std::vector<GRBVar> theta;
     theta.reserve(columns_.size());
@@ -395,13 +405,14 @@ MasterIPSolution MasterProblem::solve_restricted_ip(
     const std::map<int, std::pair<double, double>>& branch_a_bounds,
     const std::map<int, std::pair<double, double>>& branch_q_bounds,
     double time_limit,
+    int threads,
     bool log_to_console
 ) const {
     GRBEnv env(true);
     env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model(env);
-    configure_model(model, time_limit, log_to_console);
+    configure_model(model, time_limit, threads, log_to_console);
 
     std::vector<GRBVar> theta;
     theta.reserve(columns_.size());
@@ -637,6 +648,7 @@ BpcSolver::BpcSolver(InstanceData instance, BpcOptions options)
     : master_(instance, options.method), options_(std::move(options)) {
     options_.pricing.use_cuts = options_.use_cuts;
     options_.pricing.labeling.use_cuts = options_.use_cuts;
+    options_.pricing.threads = options_.threads;
     master_.seed_initial_columns();
     if (!options_.warmstarts.empty()) {
         warmstart_ = load_warmstart_columns(
@@ -709,6 +721,7 @@ MasterLPSolution BpcSolver::run_column_generation(const Node& node, double deadl
         active_sr_cuts_,
         options_.use_cuts,
         remaining,
+        options_.threads,
         false
     );
     master_time_ += now_sec() - t;
@@ -748,6 +761,7 @@ MasterLPSolution BpcSolver::run_column_generation(const Node& node, double deadl
                         active_sr_cuts_,
                         options_.use_cuts,
                         remaining,
+                        options_.threads,
                         false
                     );
                     master_time_ += now_sec() - t;
@@ -768,6 +782,7 @@ MasterLPSolution BpcSolver::run_column_generation(const Node& node, double deadl
             active_sr_cuts_,
             options_.use_cuts,
             remaining,
+            options_.threads,
             false
         );
         master_time_ += now_sec() - t;
@@ -816,14 +831,14 @@ BpcResult BpcSolver::solve() {
                   << " pricing_backend=" << pricing_backend_name(options_.pricing_backend)
                   << " max_nodes=" << options_.max_nodes
                   << " max_cg_iters=" << options_.max_cg_iters
-                  << " threads=default\n";
+                  << " threads=" << options_.threads << "\n";
     }
 
     if (warmstart_.added > 0) {
         const double remaining = deadline - now_sec();
         if (remaining > 0.0) {
             const double t = now_sec();
-            MasterIPSolution ip = master_.solve_restricted_ip({}, {}, remaining, false);
+            MasterIPSolution ip = master_.solve_restricted_ip({}, {}, remaining, options_.threads, false);
             master_time_ += now_sec() - t;
             if (ip.has_solution && !master_.has_unmet_demand(ip)) {
                 warmstart_incumbent_ = true;
@@ -876,6 +891,7 @@ BpcResult BpcSolver::solve() {
                 node.branch_a_bounds,
                 node.branch_q_bounds,
                 remaining,
+                options_.threads,
                 false
             );
             master_time_ += now_sec() - t;
@@ -962,13 +978,15 @@ BpcResult BpcSolver::solve() {
     result.labels_feasible = pricing_stats_total_.labeling_stats.labels_feasible;
     result.labels_pruned_by_bound = pricing_stats_total_.labeling_stats.labels_pruned_by_bound;
     result.labels_pruned_by_dominance = pricing_stats_total_.labeling_stats.labels_pruned_by_dominance;
-    result.labels_pruned_by_order = pricing_stats_total_.labeling_stats.labels_pruned_by_order;
     result.labels_after_dominance = pricing_stats_total_.labeling_stats.labels_after_dominance;
     result.labels_pruned_total = result.labels_pruned_by_bound +
-        result.labels_pruned_by_dominance +
-        result.labels_pruned_by_order;
-    result.placements_skipped_by_order = pricing_stats_total_.labeling_stats.placements_skipped_by_order;
-    result.labels_avoided_by_order = pricing_stats_total_.labeling_stats.labels_avoided_by_order;
+        result.labels_pruned_by_dominance;
+    result.labels_avoided_by_d2 = pricing_stats_total_.labeling_stats.labels_avoided_by_d2;
+    result.hybrid_calls = pricing_stats_total_.labeling_stats.hybrid_calls;
+    result.hybrid_ordered_type_sum = pricing_stats_total_.labeling_stats.hybrid_ordered_type_sum;
+    result.hybrid_ordered_type_max = pricing_stats_total_.labeling_stats.hybrid_ordered_type_max;
+    result.hybrid_ordered_quantity_sum = pricing_stats_total_.labeling_stats.hybrid_ordered_quantity_sum;
+    result.hybrid_total_quantity_sum = pricing_stats_total_.labeling_stats.hybrid_total_quantity_sum;
     result.warmstart_incumbent = warmstart_incumbent_;
     result.warmstart_objective = warmstart_objective_;
     result.warmstart = warmstart_;

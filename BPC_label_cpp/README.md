@@ -8,7 +8,8 @@ Implemented core modules:
 
 - dynamic segmentation: mirrors `src/utility/dynamic_segmentation.py`,
   including independent height-based splits and fixed side-block splits.
-- residual-profile label pricing: `EX`, `GR`, and `HYB` profile generators,
+- residual-profile label pricing: exact enumeration (`EX`), certified
+  ordered-greedy generation (`D2`), hybrid conflict/ordered generation (`HYB`),
   reduced-cost bound, and D1 residual/quantity dominance.
 - solver pricing: Gurobi MIP subproblems for both compartment BPC and full-wagon
   BPC. The wagon solver backend uses one full pricing MIP with binary `z_p`
@@ -22,16 +23,18 @@ Implemented core modules:
   revalidate every upper/lower compartment with the full profile evaluator, and
   add only feasible non-duplicate columns. If the imported columns cover demand,
   the solver first solves a restricted IP to install a warm-start incumbent.
-- Gurobi master and pricing models leave `Threads` at the Gurobi default.
+- Gurobi master and pricing models use `--threads N`; the default is one thread
+  for ablation comparability. Use `--threads 0` to leave Gurobi at its own
+  default.
 
 Main solver options:
 
 - `--method wagon|compartment`
 - `--pricing-backend label|solver`
-- `--profile-generator-mode ex|gr|hyb|d2` for the label backend
-- `--order-dominance-scope profile|rho_h` to choose conservative
-  profile-wise ordered dominance or the paper-style full-compartment
-  residual test
+- `--profile-generator-mode ex|d2|hyb` for the label backend
+- `--threads N`
+- `--max-columns-per-pricing N --max-columns-per-subproblem N`; for label
+  pricing, nonpositive values mean no column-count limit in one CG update
 - `--num-splits N --independent-mode-split true|false`
 - `--component-length-perturbation-mm MM` for deterministic label-pricing
   tests with component-dependent loading lengths on a subset of car types

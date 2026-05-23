@@ -47,10 +47,13 @@ void accumulate(LabelingStats& dst, const LabelingStats& src) {
     dst.labels_feasible += src.labels_feasible;
     dst.labels_pruned_by_bound += src.labels_pruned_by_bound;
     dst.labels_pruned_by_dominance += src.labels_pruned_by_dominance;
-    dst.labels_pruned_by_order += src.labels_pruned_by_order;
     dst.labels_after_dominance += src.labels_after_dominance;
-    dst.placements_skipped_by_order += src.placements_skipped_by_order;
-    dst.labels_avoided_by_order += src.labels_avoided_by_order;
+    dst.labels_avoided_by_d2 += src.labels_avoided_by_d2;
+    dst.hybrid_calls += src.hybrid_calls;
+    dst.hybrid_ordered_type_sum += src.hybrid_ordered_type_sum;
+    dst.hybrid_ordered_type_max = std::max(dst.hybrid_ordered_type_max, src.hybrid_ordered_type_max);
+    dst.hybrid_ordered_quantity_sum += src.hybrid_ordered_quantity_sum;
+    dst.hybrid_total_quantity_sum += src.hybrid_total_quantity_sum;
 }
 
 std::vector<CompartmentPattern> negative_top_k(
@@ -68,7 +71,7 @@ std::vector<CompartmentPattern> negative_top_k(
     std::sort(patterns.begin(), patterns.end(), [](const auto& a, const auto& b) {
         return a.reduced_cost < b.reduced_cost;
     });
-    if (k >= 0 && static_cast<std::size_t>(k) < patterns.size()) {
+    if (k > 0 && static_cast<std::size_t>(k) < patterns.size()) {
         patterns.resize(static_cast<std::size_t>(k));
     }
     return patterns;
@@ -246,7 +249,7 @@ std::vector<MergedPattern> merge_feasible_patterns(
     std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
         return a.reduced_cost < b.reduced_cost;
     });
-    if (max_results >= 0 && static_cast<std::size_t>(max_results) < out.size()) {
+    if (max_results > 0 && static_cast<std::size_t>(max_results) < out.size()) {
         out.resize(static_cast<std::size_t>(max_results));
     }
     return out;
@@ -443,7 +446,8 @@ std::vector<PricingColumn> price_wagon_columns(
             column_cost(master, merged.quantities),
             "wagon_label_merge",
         });
-        if (static_cast<int>(columns.size()) >= options.max_columns_per_pricing) {
+        if (options.max_columns_per_pricing > 0 &&
+            static_cast<int>(columns.size()) >= options.max_columns_per_pricing) {
             break;
         }
     }

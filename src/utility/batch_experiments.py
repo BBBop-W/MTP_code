@@ -54,7 +54,7 @@ DEFAULT_INDEP_MODE = False
 DEFAULT_TIME_LIMIT = 3600.0
 DEFAULT_MIP_GAP = 0.0001
 POST_SOLVE_GRACE_SEC = 600.0
-DEFAULT_PROFILE_GENERATOR_MODE = "gr"
+DEFAULT_PROFILE_GENERATOR_MODE = "hyb"
 
 RESULT_COLUMNS = [
     "run_id",
@@ -985,7 +985,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=DEFAULT_INDEP_MODE)
     parser.add_argument("--time-limit", type=float, default=DEFAULT_TIME_LIMIT)
     parser.add_argument("--mip-gap", type=float, default=DEFAULT_MIP_GAP)
-    parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
+    parser.add_argument("--profile-generator-mode", choices=["ex", "d2", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
     parser.add_argument("--skip-heuristics", action="store_true", help="Skip BI/VNS runs.")
     parser.add_argument("--no-warmstart", action="store_true", help="Disable warmstart columns for BPC runs.")
     parser.add_argument("--max-runs", type=int, default=None, help="Optional cap for this trial run.")

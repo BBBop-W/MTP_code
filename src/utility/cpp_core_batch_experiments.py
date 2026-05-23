@@ -148,6 +148,14 @@ RESULT_COLUMNS = [
     "profile_generator_mode",
     "generated_columns",
     "total_columns",
+    "generated_subpatterns",
+    "labels_generated_raw",
+    "labels_feasible",
+    "labels_pruned_by_bound",
+    "labels_pruned_by_dominance",
+    "labels_pruned_total",
+    "labels_after_dominance",
+    "labels_avoided_by_d2",
     "warmstart_incumbent",
     "warmstart_loaded_length_mm",
     "warmstart_added",
@@ -339,6 +347,14 @@ def run_cpp_bpc(
         "best_bound": payload.get("best_bound"),
         "generated_columns": payload.get("generated_columns"),
         "total_columns": payload.get("total_columns"),
+        "generated_subpatterns": payload.get("generated_subpatterns"),
+        "labels_generated_raw": payload.get("labels_generated_raw"),
+        "labels_feasible": payload.get("labels_feasible"),
+        "labels_pruned_by_bound": payload.get("labels_pruned_by_bound"),
+        "labels_pruned_by_dominance": payload.get("labels_pruned_by_dominance"),
+        "labels_pruned_total": payload.get("labels_pruned_total"),
+        "labels_after_dominance": payload.get("labels_after_dominance"),
+        "labels_avoided_by_d2": payload.get("labels_avoided_by_d2"),
         "warmstart_incumbent": payload.get("warmstart_incumbent") if use_warmstart else False,
         "warmstart_loaded_length_mm": payload.get("warmstart_loaded_length_mm") if use_warmstart else "",
         "warmstart_added": payload.get("warmstart_added") if use_warmstart else 0,
@@ -565,7 +581,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--independent-mode-split", action=argparse.BooleanOptionalAction, default=DEFAULT_INDEP_MODE)
     parser.add_argument("--time-limit", type=float, default=DEFAULT_TIME_LIMIT)
     parser.add_argument("--mip-gap", type=float, default=DEFAULT_MIP_GAP)
-    parser.add_argument("--profile-generator-mode", choices=["gr", "ex", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
+    parser.add_argument("--profile-generator-mode", choices=["ex", "d2", "hyb"], default=DEFAULT_PROFILE_GENERATOR_MODE)
     parser.add_argument("--residual-profile-mode", choices=["full", "fans_diag"], default="full")
     parser.add_argument("--max-nodes", type=int, default=5000)
     parser.add_argument("--max-cg-iters", type=int, default=3000)

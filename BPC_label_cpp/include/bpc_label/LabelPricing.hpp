@@ -51,7 +51,6 @@ struct LabelingOptions {
     bool use_local_d1_pruning = true;
     std::string residual_profile_mode = "full";
     std::string profile_generator_mode = "hyb";
-    std::string order_dominance_scope = "profile";
     int max_units_per_type = Config::max_units_per_compartment;
     double component_length_perturbation_min_mm = 50.0;
     double component_length_perturbation_max_mm = 0.0;
@@ -66,10 +65,13 @@ struct LabelingStats {
     std::size_t labels_feasible = 0;
     std::size_t labels_pruned_by_bound = 0;
     std::size_t labels_pruned_by_dominance = 0;
-    std::size_t labels_pruned_by_order = 0;
     std::size_t labels_after_dominance = 0;
-    std::size_t placements_skipped_by_order = 0;
-    std::size_t labels_avoided_by_order = 0;
+    std::size_t labels_avoided_by_d2 = 0;
+    std::size_t hybrid_calls = 0;
+    std::size_t hybrid_ordered_type_sum = 0;
+    std::size_t hybrid_ordered_type_max = 0;
+    std::size_t hybrid_ordered_quantity_sum = 0;
+    std::size_t hybrid_total_quantity_sum = 0;
 };
 
 struct PlacementChoice {
@@ -96,8 +98,6 @@ struct ResidualLabel {
     std::vector<int> quantities;
     double total_length = 0.0;
     std::vector<double> residual;
-    // Generation-only state for D2/D3: future ordered choices must contain these regions.
-    std::vector<int> required_hits;
 };
 
 struct CompartmentPattern {

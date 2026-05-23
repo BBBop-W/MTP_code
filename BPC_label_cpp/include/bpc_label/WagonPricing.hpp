@@ -40,6 +40,7 @@ struct PricingOptions {
     int num_splits = 1;
     bool independent_mode_split = true;
     bool use_cuts = false;
+    int threads = 1;
     int max_columns_per_pricing = Config::max_wagon_pricing_columns;
     int max_columns_per_subproblem = Config::max_compartment_pricing_columns_per_subproblem;
 };

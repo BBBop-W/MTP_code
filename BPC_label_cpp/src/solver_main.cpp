@@ -33,15 +33,15 @@ void print_usage() {
         << "  --max-columns-per-subproblem N\n"
         << "  --time-limit SEC\n"
         << "  --mip-gap GAP\n"
+        << "  --threads N\n"
         << "  --num-splits N\n"
         << "  --independent-mode-split true|false\n"
         << "  --use-cuts true|false\n"
         << "  --use-dominance true|false\n"
         << "  --use-local-d1-pruning true|false\n"
         << "  --pricing-backend label|solver\n"
-        << "  --profile-generator-mode ex|gr|hyb|d2\n"
+        << "  --profile-generator-mode ex|d2|hyb\n"
         << "  --residual-profile-mode full|fans_diag\n"
-        << "  --order-dominance-scope profile|rho_h\n"
         << "  --component-length-perturbation-mm MM\n"
         << "  --component-length-perturbation-min-mm MM\n"
         << "  --component-length-perturbation-type-period N\n"
@@ -90,6 +90,8 @@ int main(int argc, char** argv) {
                 options.time_limit = std::stod(arg_value(i, argc, argv));
             } else if (arg == "--mip-gap") {
                 options.mip_gap_tol = std::stod(arg_value(i, argc, argv));
+            } else if (arg == "--threads") {
+                options.threads = std::stoi(arg_value(i, argc, argv));
             } else if (arg == "--num-splits") {
                 options.pricing.num_splits = std::stoi(arg_value(i, argc, argv));
             } else if (arg == "--independent-mode-split") {
@@ -109,8 +111,6 @@ int main(int argc, char** argv) {
                 options.pricing.labeling.profile_generator_mode = arg_value(i, argc, argv);
             } else if (arg == "--residual-profile-mode") {
                 options.pricing.labeling.residual_profile_mode = arg_value(i, argc, argv);
-            } else if (arg == "--order-dominance-scope") {
-                options.pricing.labeling.order_dominance_scope = arg_value(i, argc, argv);
             } else if (arg == "--component-length-perturbation-mm" ||
                        arg == "--component-length-perturbation-max-mm") {
                 options.pricing.labeling.component_length_perturbation_max_mm =
@@ -150,11 +150,6 @@ int main(int argc, char** argv) {
         }
         options.pricing.use_cuts = options.use_cuts;
         options.pricing.labeling.use_cuts = options.use_cuts;
-        if (options.pricing.labeling.order_dominance_scope != "profile" &&
-            options.pricing.labeling.order_dominance_scope != "rho_h") {
-            throw std::invalid_argument("unknown order-dominance-scope: " +
-                options.pricing.labeling.order_dominance_scope);
-        }
 
         InstanceData instance = load_instance(instance_dir);
         BpcSolver solver(instance, options);
@@ -165,6 +160,14 @@ int main(int argc, char** argv) {
                   << "  \"pricing_backend\": \"" << pricing_backend_name(options.pricing_backend) << "\",\n"
                   << "  \"profile_generator_mode\": \""
                   << options.pricing.labeling.profile_generator_mode << "\",\n"
+                  << "  \"use_cuts\": " << (options.use_cuts ? "true" : "false") << ",\n"
+                  << "  \"use_dominance\": "
+                  << (options.pricing.labeling.use_dominance ? "true" : "false") << ",\n"
+                  << "  \"use_local_d1_pruning\": "
+                  << (options.pricing.labeling.use_local_d1_pruning ? "true" : "false") << ",\n"
+                  << "  \"use_rc_bound\": "
+                  << (options.pricing.labeling.use_rc_bound ? "true" : "false") << ",\n"
+                  << "  \"threads\": " << options.threads << ",\n"
                   << "  \"has_incumbent\": " << (result.has_incumbent ? "true" : "false") << ",\n"
                   << "  \"best_objective\": " << (result.has_incumbent ? result.best_objective : 0.0) << ",\n"
                   << "  \"loaded_length_mm\": " << (result.has_incumbent ? -result.best_objective : 0.0) << ",\n"
@@ -180,13 +183,14 @@ int main(int argc, char** argv) {
                   << "  \"labels_feasible\": " << result.labels_feasible << ",\n"
                   << "  \"labels_pruned_by_bound\": " << result.labels_pruned_by_bound << ",\n"
                   << "  \"labels_pruned_by_dominance\": " << result.labels_pruned_by_dominance << ",\n"
-                  << "  \"labels_pruned_by_order\": " << result.labels_pruned_by_order << ",\n"
                   << "  \"labels_after_dominance\": " << result.labels_after_dominance << ",\n"
                   << "  \"labels_pruned_total\": " << result.labels_pruned_total << ",\n"
-                  << "  \"placements_skipped_by_order\": " << result.placements_skipped_by_order << ",\n"
-                  << "  \"labels_avoided_by_order\": " << result.labels_avoided_by_order << ",\n"
-                  << "  \"order_dominance_scope\": \""
-                  << options.pricing.labeling.order_dominance_scope << "\",\n"
+                  << "  \"labels_avoided_by_d2\": " << result.labels_avoided_by_d2 << ",\n"
+                  << "  \"hybrid_calls\": " << result.hybrid_calls << ",\n"
+                  << "  \"hybrid_ordered_type_sum\": " << result.hybrid_ordered_type_sum << ",\n"
+                  << "  \"hybrid_ordered_type_max\": " << result.hybrid_ordered_type_max << ",\n"
+                  << "  \"hybrid_ordered_quantity_sum\": " << result.hybrid_ordered_quantity_sum << ",\n"
+                  << "  \"hybrid_total_quantity_sum\": " << result.hybrid_total_quantity_sum << ",\n"
                   << "  \"component_length_perturbation_min_mm\": "
                   << options.pricing.labeling.component_length_perturbation_min_mm << ",\n"
                   << "  \"component_length_perturbation_max_mm\": "
@@ -205,7 +209,6 @@ int main(int argc, char** argv) {
                   << "  \"wall_time\": " << result.wall_time << ",\n"
                   << "  \"master_time\": " << result.master_time << ",\n"
                   << "  \"pricing_time\": " << result.pricing_time << ",\n"
-                  << "  \"threads\": 0,\n"
                   << "  \"selected_columns\": [\n";
         for (std::size_t c = 0; c < result.selected_columns.size(); ++c) {
             const auto& item = result.selected_columns[c];

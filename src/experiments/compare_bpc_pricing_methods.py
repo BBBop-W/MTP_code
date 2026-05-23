@@ -175,7 +175,7 @@ def main() -> None:
         default=Config.max_compartment_pricing_columns_per_subproblem,
     )
     parser.add_argument("--use-cuts", action="store_true")
-    parser.add_argument("--profile-generator-mode", choices=["ex", "gr", "hyb"], default="hyb")
+    parser.add_argument("--profile-generator-mode", choices=["ex", "d2", "hyb"], default="hyb")
     parser.add_argument("--include-gurobi", action="store_true")
     parser.add_argument("--gurobi-time-limit", type=float, default=300.0)
     parser.add_argument("--gurobi-mip-gap", type=float, default=Config.gap)

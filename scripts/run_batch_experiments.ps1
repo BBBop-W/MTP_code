@@ -6,7 +6,7 @@ param(
   [int]$NumSplits = 3,
   [double]$TimeLimit = 3600.0,
   [double]$MipGap = 0.0001,
-  [string]$ProfileGeneratorMode = "gr",
+  [string]$ProfileGeneratorMode = "hyb",
   [switch]$SkipHeuristics,
   [switch]$NoWarmstart,
   [switch]$NoGenerate,

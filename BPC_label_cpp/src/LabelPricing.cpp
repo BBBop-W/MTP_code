@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -48,17 +47,6 @@ bool vector_subset(const std::vector<int>& a, const std::vector<int>& b) {
     return ia == a.size();
 }
 
-std::vector<int> vector_union_sorted(const std::vector<int>& a, const std::vector<int>& b) {
-    std::vector<int> out;
-    out.reserve(a.size() + b.size());
-    std::set_union(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(out));
-    return out;
-}
-
-bool vector_strict_subset(const std::vector<int>& a, const std::vector<int>& b) {
-    return a != b && vector_subset(a, b);
-}
-
 std::size_t saturated_add(std::size_t a, std::size_t b) {
     const std::size_t max_value = static_cast<std::size_t>(-1);
     if (max_value - a < b) {
@@ -96,47 +84,27 @@ std::size_t count_compositions(int total, int parts) {
     return result;
 }
 
-struct PlacementExtension {
-    std::vector<double> consumption;
-    std::vector<int> required_hits;
-    std::vector<int> counts;
-};
-
 struct ResidualChild {
     std::vector<double> residual;
-    std::vector<int> required_hits;
-    bool greedy_consistent = false;
 };
 
 enum class GeneratorMode {
     Exact,
-    OrderOnly,
     Hybrid,
-    GreedyOnly,
+    D2,
 };
 
 GeneratorMode parse_generator_mode(const std::string& mode) {
     if (mode == "exact" || mode == "ex" || mode == "e") {
         return GeneratorMode::Exact;
     }
-    if (mode == "gr") {
-        return GeneratorMode::OrderOnly;
-    }
     if (mode == "hyb" || mode == "hybrid") {
         return GeneratorMode::Hybrid;
     }
-    if (mode == "d2" || mode == "greedy" || mode == "greedy_only") {
-        return GeneratorMode::GreedyOnly;
+    if (mode == "d2") {
+        return GeneratorMode::D2;
     }
     throw std::invalid_argument("unknown profile_generator_mode: " + mode);
-}
-
-std::vector<std::vector<PlacementChoice>> choices_for_profile_generator(
-    const ResourceModel& resource_model,
-    const std::string& mode
-) {
-    (void)parse_generator_mode(mode);
-    return resource_model.choices_by_type;
 }
 
 void enumerate_consumption_rec(
@@ -217,127 +185,6 @@ std::vector<std::vector<double>> placement_consumptions(
     std::set<std::vector<double>> seen;
     std::vector<double> consumption(resource_count, 0.0);
     enumerate_consumption_rec(choices, 0, quantity, consumption, seen, out, deadline);
-    return out;
-}
-
-void enumerate_placement_extensions_rec(
-    const std::vector<PlacementChoice>& choices,
-    int choice_idx,
-    int remaining,
-    const std::vector<int>& base_required_hits,
-    bool enforce_order,
-    std::vector<double>& consumption,
-    std::vector<int>& used_hits,
-    std::vector<int>& counts,
-    std::set<std::pair<std::vector<double>, std::vector<int>>>& seen,
-    std::vector<PlacementExtension>& out,
-    LabelingStats* stats,
-    double deadline
-) {
-    if (deadline_reached(deadline)) {
-        return;
-    }
-    if (choice_idx == static_cast<int>(choices.size())) {
-        if (remaining != 0) {
-            return;
-        }
-        if (seen.insert({consumption, used_hits}).second) {
-            out.push_back(PlacementExtension{consumption, used_hits, counts});
-        }
-        return;
-    }
-
-    const auto& choice = choices[static_cast<std::size_t>(choice_idx)];
-    for (int count = 0; count <= remaining; ++count) {
-        if (count > 0 && enforce_order && !vector_subset(base_required_hits, choice.hits)) {
-            if (stats != nullptr) {
-                stats->placements_skipped_by_order += 1;
-                const int remaining_choices = static_cast<int>(choices.size()) - choice_idx - 1;
-                const std::size_t avoided = count_compositions(remaining - count, remaining_choices);
-                stats->labels_avoided_by_order = saturated_add(
-                    stats->labels_avoided_by_order,
-                    avoided
-                );
-            }
-            continue;
-        }
-
-        if (count > 0) {
-            const double amount = static_cast<double>(count) * choice.resource_length;
-            for (int hit : choice.hits) {
-                consumption[static_cast<std::size_t>(hit)] += amount;
-            }
-        }
-        counts[static_cast<std::size_t>(choice_idx)] = count;
-        std::vector<int> next_used_hits = used_hits;
-        if (count > 0 && enforce_order) {
-            next_used_hits = vector_union_sorted(next_used_hits, choice.hits);
-        }
-
-        enumerate_placement_extensions_rec(
-            choices,
-            choice_idx + 1,
-            remaining - count,
-            base_required_hits,
-            enforce_order,
-            consumption,
-            next_used_hits,
-            counts,
-            seen,
-            out,
-            stats,
-            deadline
-        );
-
-        if (count > 0) {
-            const double amount = static_cast<double>(count) * choice.resource_length;
-            for (int hit : choice.hits) {
-                consumption[static_cast<std::size_t>(hit)] -= amount;
-            }
-        }
-        counts[static_cast<std::size_t>(choice_idx)] = 0;
-    }
-}
-
-std::vector<PlacementExtension> placement_extensions(
-    const std::vector<PlacementChoice>& choices,
-    int quantity,
-    std::size_t resource_count,
-    const std::vector<int>& required_hits,
-    bool enforce_order,
-    LabelingStats* stats,
-    double deadline = 0.0
-) {
-    if (quantity == 0) {
-        return {PlacementExtension{
-            std::vector<double>(resource_count, 0.0),
-            required_hits,
-            std::vector<int>(choices.size(), 0)
-        }};
-    }
-    if (choices.empty()) {
-        return {};
-    }
-
-    std::vector<PlacementExtension> out;
-    std::set<std::pair<std::vector<double>, std::vector<int>>> seen;
-    std::vector<double> consumption(resource_count, 0.0);
-    std::vector<int> used_hits = required_hits;
-    std::vector<int> counts(choices.size(), 0);
-    enumerate_placement_extensions_rec(
-        choices,
-        0,
-        quantity,
-        required_hits,
-        enforce_order,
-        consumption,
-        used_hits,
-        counts,
-        seen,
-        out,
-        stats,
-        deadline
-    );
     return out;
 }
 
@@ -441,89 +288,9 @@ bool greedy_child_for_residual(
     const std::vector<double>& residual,
     double eps,
     ResidualChild& child
-);
-
-bool greedy_prefix_feasible(
-    const ResourceModel& resource_model,
-    const std::vector<int>& order,
-    const std::vector<int>& quantities,
-    const std::vector<double>& initial_residual,
-    double eps
-) {
-    std::vector<double> residual = initial_residual;
-    for (int type_idx_int : order) {
-        const std::size_t type_idx = static_cast<std::size_t>(type_idx_int);
-        const int q = quantities[type_idx];
-        if (q <= 0) {
-            continue;
-        }
-        ResidualChild child;
-        if (!greedy_child_for_residual(
-                resource_model.choices_by_type[type_idx],
-                q,
-                residual,
-                eps,
-                child)) {
-            return false;
-        }
-        residual = std::move(child.residual);
-    }
-    return true;
-}
-
-bool exhaustive_prefix_feasible(
-    const ResourceModel& resource_model,
-    const std::vector<int>& order,
-    const std::vector<int>& quantities,
-    const std::vector<double>& initial_residual,
-    double eps,
-    double deadline
-) {
-    std::vector<std::vector<double>> current_residuals{initial_residual};
-    for (int type_idx_int : order) {
-        if (deadline_reached(deadline)) {
-            return false;
-        }
-        const std::size_t type_idx = static_cast<std::size_t>(type_idx_int);
-        const int q = quantities[type_idx];
-        if (q <= 0) {
-            continue;
-        }
-        const auto consumptions = placement_consumptions(
-            resource_model.choices_by_type[type_idx],
-            q,
-            resource_model.capacities.size(),
-            deadline
-        );
-        if (consumptions.empty()) {
-            return false;
-        }
-        std::vector<std::vector<double>> next_residuals;
-        for (const auto& residual : current_residuals) {
-            for (const auto& consumption : consumptions) {
-                std::vector<double> child;
-                if (apply_consumption(residual, consumption, eps, child)) {
-                    next_residuals.push_back(std::move(child));
-                }
-            }
-        }
-        current_residuals = apply_local_d1_dominance(next_residuals, eps, nullptr);
-        if (current_residuals.empty()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool greedy_child_for_residual(
-    const std::vector<PlacementChoice>& choices,
-    int quantity,
-    const std::vector<double>& residual,
-    double eps,
-    ResidualChild& child
 ) {
     if (quantity == 0) {
-        child = ResidualChild{residual, {}, true};
+        child = ResidualChild{residual};
         return true;
     }
     const std::vector<int> counts = greedy_counts_for_residual(choices, quantity, residual, eps);
@@ -546,109 +313,8 @@ bool greedy_child_for_residual(
             }
         }
     }
-    child = ResidualChild{std::move(next), {}, true};
+    child = ResidualChild{std::move(next)};
     return true;
-}
-
-bool ordered_greedy_exactness_rec(
-    const CompartmentSpec& spec,
-    const ResourceModel& resource_model,
-    const std::vector<int>& prefix_order,
-    int pos,
-    int used_units,
-    int max_total_units,
-    std::vector<int>& quantities,
-    std::size_t& checked_vectors,
-    const std::vector<double>& initial_residual,
-    double eps,
-    double deadline
-) {
-    if (deadline_reached(deadline)) {
-        return false;
-    }
-    if (checked_vectors > 50000) {
-        return false;
-    }
-    if (pos == static_cast<int>(prefix_order.size())) {
-        ++checked_vectors;
-        const bool exhaustive = exhaustive_prefix_feasible(
-            resource_model,
-            prefix_order,
-            quantities,
-            initial_residual,
-            eps,
-            deadline
-        );
-        const bool greedy = greedy_prefix_feasible(
-            resource_model,
-            prefix_order,
-            quantities,
-            initial_residual,
-            eps
-        );
-        return exhaustive == greedy;
-    }
-
-    const int type_idx = prefix_order[static_cast<std::size_t>(pos)];
-    const std::size_t idx = static_cast<std::size_t>(type_idx);
-    const int max_q = std::min(
-        at_or_default(spec.max_quantity_by_type, idx, Config::max_units_per_compartment),
-        max_total_units - used_units
-    );
-    for (int q = 0; q <= max_q; ++q) {
-        quantities[idx] = q;
-        if (!ordered_greedy_exactness_rec(
-                spec,
-                resource_model,
-                prefix_order,
-                pos + 1,
-                used_units + q,
-                max_total_units,
-                quantities,
-                checked_vectors,
-                initial_residual,
-                eps,
-                deadline)) {
-            quantities[idx] = 0;
-            return false;
-        }
-    }
-    quantities[idx] = 0;
-    return true;
-}
-
-bool ordered_greedy_exactness_certified(
-    const CompartmentSpec& spec,
-    const ResourceModel& resource_model,
-    const std::vector<int>& order,
-    const std::vector<double>& initial_residual,
-    double eps,
-    double deadline,
-    int max_total_units = Config::max_units_per_compartment
-) {
-    if (max_total_units < 0) {
-        return false;
-    }
-    std::size_t checked_vectors = 0;
-    std::vector<int> quantities(spec.car_types.size(), 0);
-    for (std::size_t prefix_len = 1; prefix_len <= order.size(); ++prefix_len) {
-        std::vector<int> prefix_order(order.begin(), order.begin() + static_cast<long>(prefix_len));
-        if (!ordered_greedy_exactness_rec(
-                spec,
-                resource_model,
-                prefix_order,
-                0,
-                0,
-                max_total_units,
-                quantities,
-                checked_vectors,
-                initial_residual,
-                eps,
-                deadline)) {
-            return false;
-        }
-    }
-    return checked_vectors > 0;
 }
 
 bool residual_vector_dominates(
@@ -692,33 +358,8 @@ bool residual_child_dominates(
     double eps
 ) {
     bool residual_strict = false;
-    if (!residual_vector_weakly_dominates(a.residual, b.residual, eps, residual_strict)) {
-        return false;
-    }
-    if (!vector_subset(a.required_hits, b.required_hits)) {
-        return false;
-    }
-    const bool required_strict = vector_strict_subset(a.required_hits, b.required_hits);
-    return residual_strict || required_strict;
-}
-
-bool greedy_child_covers(
-    const ResidualChild& greedy,
-    const ResidualChild& other,
-    double eps,
-    bool use_full_region_only,
-    int full_region_index
-) {
-    if (use_full_region_only) {
-        if (full_region_index < 0) {
-            return false;
-        }
-        const std::size_t idx = static_cast<std::size_t>(full_region_index);
-        return greedy.residual[idx] + eps >= other.residual[idx];
-    }
-    bool strict_unused = false;
-    return residual_vector_weakly_dominates(greedy.residual, other.residual, eps, strict_unused) &&
-        vector_subset(greedy.required_hits, other.required_hits);
+    return residual_vector_weakly_dominates(a.residual, b.residual, eps, residual_strict) &&
+        residual_strict;
 }
 
 std::vector<std::vector<double>> apply_local_d1_dominance(
@@ -758,54 +399,6 @@ std::vector<std::vector<double>> apply_local_d1_dominance(
             kept = std::move(next);
         }
         kept.push_back(residual);
-    }
-    return kept;
-}
-
-std::vector<ResidualChild> apply_greedy_order_dominance(
-    const std::vector<ResidualChild>& children,
-    double eps,
-    bool use_full_region_only,
-    int full_region_index,
-    LabelingStats* stats
-) {
-    std::vector<ResidualChild> greedy_children;
-    for (const auto& child : children) {
-        if (child.greedy_consistent) {
-            greedy_children.push_back(child);
-        }
-    }
-    if (greedy_children.empty()) {
-        return children;
-    }
-
-    std::vector<ResidualChild> kept;
-    kept.reserve(children.size());
-    for (const auto& child : children) {
-        if (child.greedy_consistent) {
-            kept.push_back(child);
-            continue;
-        }
-
-        bool dominated = false;
-        for (const auto& greedy : greedy_children) {
-            if (greedy_child_covers(
-                    greedy,
-                    child,
-                    eps,
-                    use_full_region_only,
-                    full_region_index)) {
-                dominated = true;
-                break;
-            }
-        }
-        if (dominated) {
-            if (stats != nullptr) {
-                stats->labels_pruned_by_order += 1;
-            }
-            continue;
-        }
-        kept.push_back(child);
     }
     return kept;
 }
@@ -892,9 +485,6 @@ bool residual_label_dominates(
     if (!support_idx.empty() && !same_support_on_types(a.quantities, b.quantities, support_idx)) {
         return false;
     }
-    if (!vector_subset(a.required_hits, b.required_hits)) {
-        return false;
-    }
 
     bool quantity_strict = false;
     for (std::size_t i = 0; i < a.quantities.size(); ++i) {
@@ -918,7 +508,6 @@ bool residual_label_dominates(
 
     return profile_strict ||
         quantity_strict ||
-        vector_strict_subset(a.required_hits, b.required_hits) ||
         a.reduced_cost < b.reduced_cost - eps;
 }
 
@@ -1270,138 +859,11 @@ std::vector<int> longest_order_compatible_chain(
     return chain;
 }
 
-std::vector<int> sorted_type_candidates(const CompartmentSpec& spec) {
-    std::vector<int> candidates(spec.car_types.size());
-    std::iota(candidates.begin(), candidates.end(), 0);
-    std::sort(candidates.begin(), candidates.end(), [&](int a, int b) {
-        const std::size_t ia = static_cast<std::size_t>(a);
-        const std::size_t ib = static_cast<std::size_t>(b);
-        if (std::abs(spec.car_lengths[ia] - spec.car_lengths[ib]) > Config::eps) {
-            return spec.car_lengths[ia] < spec.car_lengths[ib];
-        }
-        if (std::abs(spec.car_heights[ia] - spec.car_heights[ib]) > Config::eps) {
-            return spec.car_heights[ia] < spec.car_heights[ib];
-        }
-        return spec.car_types[ia] < spec.car_types[ib];
-    });
-    return candidates;
-}
-
-void search_certified_ordered_chain_rec(
-    const CompartmentSpec& spec,
-    const ResourceModel& resource_model,
-    const std::vector<int>& candidates,
-    const std::vector<std::vector<bool>>& precedes,
-    std::size_t pos,
-    std::vector<int>& current,
-    std::vector<int>& best,
-    const LabelingOptions& options
-) {
-    if (deadline_reached(options.deadline)) {
-        return;
-    }
-    if (current.size() + candidates.size() - pos <= best.size()) {
-        return;
-    }
-    if (pos >= candidates.size()) {
-        return;
-    }
-
-    const int candidate = candidates[pos];
-    bool can_append = true;
-    for (int previous : current) {
-        if (!precedes[static_cast<std::size_t>(previous)][static_cast<std::size_t>(candidate)]) {
-            can_append = false;
-            break;
-        }
-    }
-    if (can_append) {
-        current.push_back(candidate);
-        if (current.size() > best.size() &&
-            ordered_greedy_exactness_certified(
-                spec,
-                resource_model,
-                current,
-                resource_model.capacities,
-                options.eps,
-                options.deadline)) {
-            best = current;
-        }
-        search_certified_ordered_chain_rec(
-            spec,
-            resource_model,
-            candidates,
-            precedes,
-            pos + 1,
-            current,
-            best,
-            options
-        );
-        current.pop_back();
-    }
-
-    search_certified_ordered_chain_rec(
-        spec,
-        resource_model,
-        candidates,
-        precedes,
-        pos + 1,
-        current,
-        best,
-        options
-    );
-}
-
-std::vector<int> longest_certified_ordered_chain(
-    const CompartmentSpec& spec,
-    const ResourceModel& resource_model,
-    double eps,
-    bool require_exchange_certificate,
-    bool require_profile_certificate,
-    const LabelingOptions& options
-) {
-    const std::vector<int> candidates = sorted_type_candidates(spec);
-    const std::size_t n = spec.car_types.size();
-    std::vector<std::vector<bool>> precedes(n, std::vector<bool>(n, false));
-    for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t j = 0; j < n; ++j) {
-            if (i == j) {
-                precedes[i][j] = true;
-                continue;
-            }
-            precedes[i][j] = type_less_restrictive(
-                spec,
-                resource_model,
-                static_cast<int>(i),
-                static_cast<int>(j),
-                eps,
-                require_exchange_certificate,
-                require_profile_certificate
-            );
-        }
-    }
-
-    std::vector<int> current;
-    std::vector<int> best;
-    search_certified_ordered_chain_rec(
-        spec,
-        resource_model,
-        candidates,
-        precedes,
-        0,
-        current,
-        best,
-        options
-    );
-    return best;
-}
-
 std::vector<int> article_search_order(
     const CompartmentSpec& spec,
     const ResourceModel& resource_model,
     bool use_height_order,
     GeneratorMode generator_mode,
-    const LabelingOptions& options,
     double eps,
     std::vector<bool>& ordered_mask
 ) {
@@ -1411,30 +873,15 @@ std::vector<int> article_search_order(
     }
 
     const bool require_exchange_certificate = true;
-    const bool require_profile_certificate =
-        generator_mode != GeneratorMode::GreedyOnly &&
-        options.order_dominance_scope == "profile";
-    const std::vector<int> ordered_chain = generator_mode == GeneratorMode::Hybrid
-        ? longest_certified_ordered_chain(
-            spec,
-            resource_model,
-            eps,
-            require_exchange_certificate,
-            require_profile_certificate,
-            options
-        )
-        : longest_order_compatible_chain(
-            spec,
-            resource_model,
-            eps,
-            require_exchange_certificate,
-            require_profile_certificate
-        );
-    if (generator_mode == GeneratorMode::OrderOnly &&
-        ordered_chain.size() != spec.car_types.size()) {
-        return ordered_type_indices(spec, use_height_order);
-    }
-    if (generator_mode == GeneratorMode::GreedyOnly &&
+    const bool require_profile_certificate = true;
+    const std::vector<int> ordered_chain = longest_order_compatible_chain(
+        spec,
+        resource_model,
+        eps,
+        require_exchange_certificate,
+        require_profile_certificate
+    );
+    if (generator_mode == GeneratorMode::D2 &&
         ordered_chain.size() != spec.car_types.size()) {
         return ordered_type_indices(spec, use_height_order);
     }
@@ -1442,8 +889,7 @@ std::vector<int> article_search_order(
         ordered_mask[static_cast<std::size_t>(idx)] = true;
     }
 
-    if (generator_mode == GeneratorMode::OrderOnly ||
-        generator_mode == GeneratorMode::GreedyOnly) {
+    if (generator_mode == GeneratorMode::D2) {
         return ordered_chain;
     }
 
@@ -1739,40 +1185,39 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
         options.residual_profile_mode,
         options
     );
-    std::vector<std::vector<PlacementChoice>> choices_by_type =
-        choices_for_profile_generator(resource_model, options.profile_generator_mode);
     GeneratorMode generator_mode = parse_generator_mode(options.profile_generator_mode);
+    const std::vector<std::vector<PlacementChoice>>& choices_by_type = resource_model.choices_by_type;
     std::vector<bool> ordered_type_mask;
     std::vector<int> order = article_search_order(
         spec,
         resource_model,
         options.use_height_order,
         generator_mode,
-        options,
         options.eps,
         ordered_type_mask
     );
-    if (generator_mode == GeneratorMode::GreedyOnly) {
-        const bool all_ordered = std::all_of(
-            ordered_type_mask.begin(),
-            ordered_type_mask.end(),
-            [](bool value) { return value; }
-        );
-        const bool certified = all_ordered && ordered_greedy_exactness_certified(
-            spec,
-            resource_model,
-            order,
-            resource_model.capacities,
-            options.eps,
-            options.deadline
-        );
-        if (!certified) {
-            generator_mode = GeneratorMode::Exact;
-            ordered_type_mask.assign(spec.car_types.size(), false);
-            order = ordered_type_indices(spec, options.use_height_order);
+    if (stats != nullptr && generator_mode == GeneratorMode::Hybrid) {
+        std::size_t ordered_count = 0;
+        std::size_t ordered_quantity = 0;
+        std::size_t total_quantity = 0;
+        for (std::size_t idx = 0; idx < spec.car_types.size(); ++idx) {
+            const int max_q = std::max(0, at_or_default(
+                spec.max_quantity_by_type,
+                idx,
+                options.max_units_per_type
+            ));
+            total_quantity += static_cast<std::size_t>(max_q);
+            if (idx < ordered_type_mask.size() && ordered_type_mask[idx]) {
+                ++ordered_count;
+                ordered_quantity += static_cast<std::size_t>(max_q);
+            }
         }
+        stats->hybrid_calls += 1;
+        stats->hybrid_ordered_type_sum += ordered_count;
+        stats->hybrid_ordered_type_max = std::max(stats->hybrid_ordered_type_max, ordered_count);
+        stats->hybrid_ordered_quantity_sum += ordered_quantity;
+        stats->hybrid_total_quantity_sum += total_quantity;
     }
-
     std::vector<int> root_quantities(spec.car_types.size(), 0);
     double root_rc = -duals.gamma / 2.0;
     if (options.use_cuts) {
@@ -1786,7 +1231,6 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
         root_quantities,
         0.0,
         resource_model.capacities,
-        {},
     });
     for (std::size_t stage_pos = 0; stage_pos < order.size(); ++stage_pos) {
         const int type_idx_int = order[stage_pos];
@@ -1844,19 +1288,11 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
 
                 const double total_length = label.total_length + unit_length * static_cast<double>(q);
                 std::vector<ResidualChild> residual_children;
-                const bool use_greedy_only =
-                    (generator_mode == GeneratorMode::GreedyOnly &&
+                const bool use_d2_extension =
+                    (generator_mode == GeneratorMode::D2 &&
                      ordered_type_mask[static_cast<std::size_t>(type_idx)]) ||
                     hybrid_ordered_stage;
-                const bool use_greedy_d2 =
-                    generator_mode == GeneratorMode::OrderOnly &&
-                    ordered_type_mask[static_cast<std::size_t>(type_idx)] &&
-                    q > 0;
-                const bool enforce_order = false;
-                const std::vector<int> greedy_counts = use_greedy_d2
-                    ? greedy_counts_for_residual(choices, q, label.residual, options.eps)
-                    : std::vector<int>{};
-                if (use_greedy_only) {
+                if (use_d2_extension) {
                     ResidualChild child;
                     if (greedy_child_for_residual(choices, q, label.residual, options.eps, child)) {
                         if (stats != nullptr) {
@@ -1864,8 +1300,8 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
                             const std::size_t all_placements =
                                 count_compositions(q, static_cast<int>(choices.size()));
                             if (all_placements > 1) {
-                                stats->labels_avoided_by_order = saturated_add(
-                                    stats->labels_avoided_by_order,
+                                stats->labels_avoided_by_d2 = saturated_add(
+                                    stats->labels_avoided_by_d2,
                                     all_placements - 1
                                 );
                             }
@@ -1873,42 +1309,25 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
                         residual_children.push_back(std::move(child));
                     }
                 } else {
-                    const auto extensions = placement_extensions(
+                    const auto consumptions = placement_consumptions(
                         choices,
                         q,
                         resource_model.capacities.size(),
-                        label.required_hits,
-                        enforce_order,
-                        stats,
                         options.deadline
                     );
-                    for (const auto& extension : extensions) {
+                    for (const auto& consumption : consumptions) {
                         std::vector<double> residual;
-                        if (apply_consumption(label.residual, extension.consumption, options.eps, residual)) {
+                        if (apply_consumption(label.residual, consumption, options.eps, residual)) {
                             if (stats != nullptr) {
                                 stats->labels_generated_raw += 1;
                             }
-                            const bool greedy_consistent = use_greedy_d2 &&
-                                !greedy_counts.empty() &&
-                                extension.counts == greedy_counts;
                             residual_children.push_back(ResidualChild{
                                 std::move(residual),
-                                extension.required_hits,
-                                greedy_consistent
                             });
                         }
                     }
                 }
 
-                if (use_greedy_d2) {
-                    residual_children = apply_greedy_order_dominance(
-                        residual_children,
-                        options.eps,
-                        options.order_dominance_scope == "rho_h",
-                        resource_model.full_region_index,
-                        stats
-                    );
-                }
                 if (options.use_dominance && options.use_local_d1_pruning) {
                     residual_children = apply_local_d1_dominance(residual_children, options.eps, stats);
                 }
@@ -1923,7 +1342,6 @@ std::vector<CompartmentPattern> generate_compartment_patterns_residual(
                         q_new,
                         total_length,
                         std::move(child.residual),
-                        std::move(child.required_hits),
                     });
                 }
             }

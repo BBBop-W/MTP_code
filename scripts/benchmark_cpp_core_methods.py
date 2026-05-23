@@ -90,6 +90,14 @@ def run_cpp_method(
             "best_bound": "",
             "nodes": "",
             "generated_columns": "",
+            "generated_subpatterns": "",
+            "labels_generated_raw": "",
+            "labels_feasible": "",
+            "labels_pruned_by_bound": "",
+            "labels_pruned_by_dominance": "",
+            "labels_pruned_total": "",
+            "labels_after_dominance": "",
+            "labels_avoided_by_d2": "",
             "use_cuts": args.use_cuts,
             "warmstart_added": "",
             "warmstart_incumbent": "",
@@ -118,6 +126,14 @@ def run_cpp_method(
         "best_bound": payload.get("best_bound", ""),
         "nodes": payload.get("explored_nodes", ""),
         "generated_columns": payload.get("generated_columns", ""),
+        "generated_subpatterns": payload.get("generated_subpatterns", ""),
+        "labels_generated_raw": payload.get("labels_generated_raw", ""),
+        "labels_feasible": payload.get("labels_feasible", ""),
+        "labels_pruned_by_bound": payload.get("labels_pruned_by_bound", ""),
+        "labels_pruned_by_dominance": payload.get("labels_pruned_by_dominance", ""),
+        "labels_pruned_total": payload.get("labels_pruned_total", ""),
+        "labels_after_dominance": payload.get("labels_after_dominance", ""),
+        "labels_avoided_by_d2": payload.get("labels_avoided_by_d2", ""),
         "use_cuts": args.use_cuts,
         "warmstart_added": payload.get("warmstart_added", ""),
         "warmstart_incumbent": payload.get("warmstart_incumbent", ""),
@@ -156,6 +172,14 @@ def run_compact(instance_dir: Path, args: argparse.Namespace) -> Dict[str, Any]:
         "best_bound": summary.get("obj_bound", ""),
         "nodes": summary.get("node_count", ""),
         "generated_columns": "",
+        "generated_subpatterns": "",
+        "labels_generated_raw": "",
+        "labels_feasible": "",
+        "labels_pruned_by_bound": "",
+        "labels_pruned_by_dominance": "",
+        "labels_pruned_total": "",
+        "labels_after_dominance": "",
+        "labels_avoided_by_d2": "",
         "use_cuts": "",
         "warmstart_added": "",
         "warmstart_incumbent": "",
@@ -239,6 +263,14 @@ FIELDS = [
     "best_bound",
     "nodes",
     "generated_columns",
+    "generated_subpatterns",
+    "labels_generated_raw",
+    "labels_feasible",
+    "labels_pruned_by_bound",
+    "labels_pruned_by_dominance",
+    "labels_pruned_total",
+    "labels_after_dominance",
+    "labels_avoided_by_d2",
     "use_cuts",
     "warmstart_added",
     "warmstart_incumbent",
@@ -282,7 +314,7 @@ def main() -> None:
     parser.add_argument("--warmstart-time-limit", type=float, default=300.0)
     parser.add_argument("--require-warmstart-incumbent", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--vns-exe", type=Path, default=PROJECT_ROOT / "VNS_cpp" / "vns_solver")
-    parser.add_argument("--profile-generator-mode", default="hyb", choices=["ex", "gr", "hyb"])
+    parser.add_argument("--profile-generator-mode", default="hyb", choices=["ex", "d2", "hyb"])
     parser.add_argument("--residual-profile-mode", default="full", choices=["full", "fans_diag"])
     parser.add_argument("--cpp-exe", type=Path, default=PROJECT_ROOT / "BPC_label_cpp" / "bpc_label_solver")
     parser.add_argument("--skip-compact", action="store_true")

@@ -63,6 +63,7 @@ struct BpcOptions {
     int max_cg_iters = 3000;
     double time_limit = 300.0;
     double mip_gap_tol = 5e-6;
+    int threads = 1;
     bool use_cuts = false;
     bool log_progress = true;
 };
@@ -97,11 +98,14 @@ struct BpcResult {
     std::size_t labels_feasible = 0;
     std::size_t labels_pruned_by_bound = 0;
     std::size_t labels_pruned_by_dominance = 0;
-    std::size_t labels_pruned_by_order = 0;
     std::size_t labels_after_dominance = 0;
     std::size_t labels_pruned_total = 0;
-    std::size_t placements_skipped_by_order = 0;
-    std::size_t labels_avoided_by_order = 0;
+    std::size_t labels_avoided_by_d2 = 0;
+    std::size_t hybrid_calls = 0;
+    std::size_t hybrid_ordered_type_sum = 0;
+    std::size_t hybrid_ordered_type_max = 0;
+    std::size_t hybrid_ordered_quantity_sum = 0;
+    std::size_t hybrid_total_quantity_sum = 0;
     bool warmstart_incumbent = false;
     double warmstart_objective = 0.0;
     WarmstartLoadResult warmstart;
@@ -121,6 +125,7 @@ public:
         const std::set<std::array<int, 3>>& active_sr_cuts,
         bool use_capacity_cut,
         double time_limit,
+        int threads,
         bool log_to_console
     ) const;
 
@@ -128,6 +133,7 @@ public:
         const std::map<int, std::pair<double, double>>& branch_a_bounds,
         const std::map<int, std::pair<double, double>>& branch_q_bounds,
         double time_limit,
+        int threads,
         bool log_to_console
     ) const;
 
