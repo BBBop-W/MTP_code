@@ -55,7 +55,7 @@ int main() {
     options.labeling.use_dominance = true;
     options.labeling.use_rc_bound = false;
     options.labeling.use_height_order = true;
-    options.labeling.use_local_residual_skyline = true;
+    options.labeling.use_local_d1_pruning = true;
     options.labeling.residual_profile_mode = "full";
     options.labeling.profile_generator_mode = "hyb";
     options.labeling.max_units_per_type = Config::max_units_per_compartment;
@@ -63,9 +63,11 @@ int main() {
     PricingStats compartment_stats;
     const auto compartment_columns = price_compartment_columns(master, options, &compartment_stats);
     print_columns("compartment", compartment_columns);
-    std::cout << "  labels_feasible=" << compartment_stats.labeling_stats.labels_feasible
+    std::cout << "  labels_raw=" << compartment_stats.labeling_stats.labels_generated_raw
+              << " labels_feasible=" << compartment_stats.labeling_stats.labels_feasible
               << " dominated=" << compartment_stats.labeling_stats.labels_pruned_by_dominance
-              << " local_skyline=" << compartment_stats.labeling_stats.labels_pruned_by_local_skyline
+              << " order_pruned=" << compartment_stats.labeling_stats.labels_pruned_by_order
+              << " order_avoided=" << compartment_stats.labeling_stats.labels_avoided_by_order
               << "\n";
 
     PricingStats wagon_stats;
@@ -73,7 +75,10 @@ int main() {
     print_columns("wagon", wagon_columns);
     std::cout << "  subpatterns=" << wagon_stats.generated_subpatterns
               << " merge_pairs=" << wagon_stats.merge_attempt_pairs
+              << " labels_raw=" << wagon_stats.labeling_stats.labels_generated_raw
               << " labels_feasible=" << wagon_stats.labeling_stats.labels_feasible
+              << " order_pruned=" << wagon_stats.labeling_stats.labels_pruned_by_order
+              << " order_avoided=" << wagon_stats.labeling_stats.labels_avoided_by_order
               << "\n";
 
     return 0;

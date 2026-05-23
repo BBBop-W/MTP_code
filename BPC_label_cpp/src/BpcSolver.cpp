@@ -72,6 +72,19 @@ std::string seq_id(const std::string& prefix, int seq) {
     return oss.str();
 }
 
+void accumulate_pricing_stats(PricingStats& dst, const PricingStats& src) {
+    dst.generated_subpatterns += src.generated_subpatterns;
+    dst.merge_attempt_pairs += src.merge_attempt_pairs;
+    dst.labeling_stats.labels_generated_raw += src.labeling_stats.labels_generated_raw;
+    dst.labeling_stats.labels_feasible += src.labeling_stats.labels_feasible;
+    dst.labeling_stats.labels_pruned_by_bound += src.labeling_stats.labels_pruned_by_bound;
+    dst.labeling_stats.labels_pruned_by_dominance += src.labeling_stats.labels_pruned_by_dominance;
+    dst.labeling_stats.labels_pruned_by_order += src.labeling_stats.labels_pruned_by_order;
+    dst.labeling_stats.labels_after_dominance += src.labeling_stats.labels_after_dominance;
+    dst.labeling_stats.placements_skipped_by_order += src.labeling_stats.placements_skipped_by_order;
+    dst.labeling_stats.labels_avoided_by_order += src.labeling_stats.labels_avoided_by_order;
+}
+
 int sr_coeff_for_column(
     const PatternColumn& column,
     const std::array<int, 3>& subset,
@@ -714,6 +727,7 @@ MasterLPSolution BpcSolver::run_column_generation(const Node& node, double deadl
         t = now_sec();
         const auto new_columns = price(solution, &pricing_stats, deadline);
         pricing_time_ += now_sec() - t;
+        accumulate_pricing_stats(pricing_stats_total_, pricing_stats);
 
         const int added = add_pricing_columns(new_columns);
         if (added == 0) {
@@ -942,6 +956,19 @@ BpcResult BpcSolver::solve() {
     result.wall_time = wall;
     result.master_time = master_time_;
     result.pricing_time = pricing_time_;
+    result.generated_subpatterns = pricing_stats_total_.generated_subpatterns;
+    result.merge_attempt_pairs = pricing_stats_total_.merge_attempt_pairs;
+    result.labels_generated_raw = pricing_stats_total_.labeling_stats.labels_generated_raw;
+    result.labels_feasible = pricing_stats_total_.labeling_stats.labels_feasible;
+    result.labels_pruned_by_bound = pricing_stats_total_.labeling_stats.labels_pruned_by_bound;
+    result.labels_pruned_by_dominance = pricing_stats_total_.labeling_stats.labels_pruned_by_dominance;
+    result.labels_pruned_by_order = pricing_stats_total_.labeling_stats.labels_pruned_by_order;
+    result.labels_after_dominance = pricing_stats_total_.labeling_stats.labels_after_dominance;
+    result.labels_pruned_total = result.labels_pruned_by_bound +
+        result.labels_pruned_by_dominance +
+        result.labels_pruned_by_order;
+    result.placements_skipped_by_order = pricing_stats_total_.labeling_stats.placements_skipped_by_order;
+    result.labels_avoided_by_order = pricing_stats_total_.labeling_stats.labels_avoided_by_order;
     result.warmstart_incumbent = warmstart_incumbent_;
     result.warmstart_objective = warmstart_objective_;
     result.warmstart = warmstart_;

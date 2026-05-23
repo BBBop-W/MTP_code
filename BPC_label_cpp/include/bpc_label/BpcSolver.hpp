@@ -91,8 +91,17 @@ struct BpcResult {
     double master_time = 0.0;
     double pricing_time = 0.0;
     double labeling_time_proxy = 0.0;
+    std::size_t generated_subpatterns = 0;
+    std::size_t merge_attempt_pairs = 0;
+    std::size_t labels_generated_raw = 0;
     std::size_t labels_feasible = 0;
+    std::size_t labels_pruned_by_bound = 0;
     std::size_t labels_pruned_by_dominance = 0;
+    std::size_t labels_pruned_by_order = 0;
+    std::size_t labels_after_dominance = 0;
+    std::size_t labels_pruned_total = 0;
+    std::size_t placements_skipped_by_order = 0;
+    std::size_t labels_avoided_by_order = 0;
     bool warmstart_incumbent = false;
     double warmstart_objective = 0.0;
     WarmstartLoadResult warmstart;
@@ -174,6 +183,7 @@ private:
     BpcOptions options_;
     int column_seq_ = 0;
     int generated_columns_ = 0;
+    PricingStats pricing_stats_total_;
     double master_time_ = 0.0;
     double pricing_time_ = 0.0;
     double best_obj_ = 0.0;

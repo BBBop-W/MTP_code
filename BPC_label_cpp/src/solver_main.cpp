@@ -36,9 +36,15 @@ void print_usage() {
         << "  --num-splits N\n"
         << "  --independent-mode-split true|false\n"
         << "  --use-cuts true|false\n"
+        << "  --use-dominance true|false\n"
+        << "  --use-local-d1-pruning true|false\n"
         << "  --pricing-backend label|solver\n"
-        << "  --profile-generator-mode ex|gr|hyb\n"
+        << "  --profile-generator-mode ex|gr|hyb|d2\n"
         << "  --residual-profile-mode full|fans_diag\n"
+        << "  --order-dominance-scope profile|rho_h\n"
+        << "  --component-length-perturbation-mm MM\n"
+        << "  --component-length-perturbation-min-mm MM\n"
+        << "  --component-length-perturbation-type-period N\n"
         << "  --warmstart-json PREFIX:PATH\n"
         << "  --quiet\n";
 }
@@ -57,7 +63,7 @@ int main(int argc, char** argv) {
         options.pricing.labeling.use_dominance = true;
         options.pricing.labeling.use_rc_bound = true;
         options.pricing.labeling.use_height_order = true;
-        options.pricing.labeling.use_local_residual_skyline = true;
+        options.pricing.labeling.use_local_d1_pruning = true;
         bool user_set_rc_bound = false;
         bool user_set_max_columns = false;
 
@@ -90,6 +96,10 @@ int main(int argc, char** argv) {
                 options.pricing.independent_mode_split = parse_bool(arg_value(i, argc, argv));
             } else if (arg == "--use-cuts") {
                 options.use_cuts = parse_bool(arg_value(i, argc, argv));
+            } else if (arg == "--use-dominance") {
+                options.pricing.labeling.use_dominance = parse_bool(arg_value(i, argc, argv));
+            } else if (arg == "--use-local-d1-pruning") {
+                options.pricing.labeling.use_local_d1_pruning = parse_bool(arg_value(i, argc, argv));
             } else if (arg == "--pricing-backend" || arg == "--pricing-method") {
                 options.pricing_backend = parse_pricing_backend(arg_value(i, argc, argv));
             } else if (arg == "--use-rc-bound") {
@@ -99,6 +109,18 @@ int main(int argc, char** argv) {
                 options.pricing.labeling.profile_generator_mode = arg_value(i, argc, argv);
             } else if (arg == "--residual-profile-mode") {
                 options.pricing.labeling.residual_profile_mode = arg_value(i, argc, argv);
+            } else if (arg == "--order-dominance-scope") {
+                options.pricing.labeling.order_dominance_scope = arg_value(i, argc, argv);
+            } else if (arg == "--component-length-perturbation-mm" ||
+                       arg == "--component-length-perturbation-max-mm") {
+                options.pricing.labeling.component_length_perturbation_max_mm =
+                    std::stod(arg_value(i, argc, argv));
+            } else if (arg == "--component-length-perturbation-min-mm") {
+                options.pricing.labeling.component_length_perturbation_min_mm =
+                    std::stod(arg_value(i, argc, argv));
+            } else if (arg == "--component-length-perturbation-type-period") {
+                options.pricing.labeling.component_length_perturbation_type_period =
+                    std::stoi(arg_value(i, argc, argv));
             } else if (arg == "--warmstart-json") {
                 const std::string raw = arg_value(i, argc, argv);
                 const std::size_t sep = raw.find(':');
@@ -128,6 +150,11 @@ int main(int argc, char** argv) {
         }
         options.pricing.use_cuts = options.use_cuts;
         options.pricing.labeling.use_cuts = options.use_cuts;
+        if (options.pricing.labeling.order_dominance_scope != "profile" &&
+            options.pricing.labeling.order_dominance_scope != "rho_h") {
+            throw std::invalid_argument("unknown order-dominance-scope: " +
+                options.pricing.labeling.order_dominance_scope);
+        }
 
         InstanceData instance = load_instance(instance_dir);
         BpcSolver solver(instance, options);
@@ -136,6 +163,8 @@ int main(int argc, char** argv) {
         std::cout << "{\n"
                   << "  \"method\": \"" << method_name(options.method) << "\",\n"
                   << "  \"pricing_backend\": \"" << pricing_backend_name(options.pricing_backend) << "\",\n"
+                  << "  \"profile_generator_mode\": \""
+                  << options.pricing.labeling.profile_generator_mode << "\",\n"
                   << "  \"has_incumbent\": " << (result.has_incumbent ? "true" : "false") << ",\n"
                   << "  \"best_objective\": " << (result.has_incumbent ? result.best_objective : 0.0) << ",\n"
                   << "  \"loaded_length_mm\": " << (result.has_incumbent ? -result.best_objective : 0.0) << ",\n"
@@ -145,6 +174,25 @@ int main(int argc, char** argv) {
                   << "  \"generated_columns\": " << result.generated_columns << ",\n"
                   << "  \"total_columns\": " << result.total_columns << ",\n"
                   << "  \"loaded_vehicle_count\": " << result.loaded_vehicle_count << ",\n"
+                  << "  \"generated_subpatterns\": " << result.generated_subpatterns << ",\n"
+                  << "  \"merge_attempt_pairs\": " << result.merge_attempt_pairs << ",\n"
+                  << "  \"labels_generated_raw\": " << result.labels_generated_raw << ",\n"
+                  << "  \"labels_feasible\": " << result.labels_feasible << ",\n"
+                  << "  \"labels_pruned_by_bound\": " << result.labels_pruned_by_bound << ",\n"
+                  << "  \"labels_pruned_by_dominance\": " << result.labels_pruned_by_dominance << ",\n"
+                  << "  \"labels_pruned_by_order\": " << result.labels_pruned_by_order << ",\n"
+                  << "  \"labels_after_dominance\": " << result.labels_after_dominance << ",\n"
+                  << "  \"labels_pruned_total\": " << result.labels_pruned_total << ",\n"
+                  << "  \"placements_skipped_by_order\": " << result.placements_skipped_by_order << ",\n"
+                  << "  \"labels_avoided_by_order\": " << result.labels_avoided_by_order << ",\n"
+                  << "  \"order_dominance_scope\": \""
+                  << options.pricing.labeling.order_dominance_scope << "\",\n"
+                  << "  \"component_length_perturbation_min_mm\": "
+                  << options.pricing.labeling.component_length_perturbation_min_mm << ",\n"
+                  << "  \"component_length_perturbation_max_mm\": "
+                  << options.pricing.labeling.component_length_perturbation_max_mm << ",\n"
+                  << "  \"component_length_perturbation_type_period\": "
+                  << options.pricing.labeling.component_length_perturbation_type_period << ",\n"
                   << "  \"warmstart_incumbent\": " << (result.warmstart_incumbent ? "true" : "false") << ",\n"
                   << "  \"warmstart_objective\": " << (result.warmstart_incumbent ? result.warmstart_objective : 0.0) << ",\n"
                   << "  \"warmstart_loaded_length_mm\": " << (result.warmstart_incumbent ? -result.warmstart_objective : 0.0) << ",\n"

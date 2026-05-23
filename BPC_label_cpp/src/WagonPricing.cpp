@@ -43,12 +43,14 @@ double column_cost(const MasterSnapshot& master, const std::vector<int>& quantit
 }
 
 void accumulate(LabelingStats& dst, const LabelingStats& src) {
+    dst.labels_generated_raw += src.labels_generated_raw;
     dst.labels_feasible += src.labels_feasible;
     dst.labels_pruned_by_bound += src.labels_pruned_by_bound;
     dst.labels_pruned_by_dominance += src.labels_pruned_by_dominance;
-    dst.labels_pruned_by_local_skyline += src.labels_pruned_by_local_skyline;
+    dst.labels_pruned_by_order += src.labels_pruned_by_order;
     dst.labels_after_dominance += src.labels_after_dominance;
-    dst.reachability_probes += src.reachability_probes;
+    dst.placements_skipped_by_order += src.placements_skipped_by_order;
+    dst.labels_avoided_by_order += src.labels_avoided_by_order;
 }
 
 std::vector<CompartmentPattern> negative_top_k(
@@ -270,6 +272,12 @@ std::vector<PricingColumn> price_compartment_columns(
     const CutConfig* cuts = options.use_cuts ? &cut_config : nullptr;
     PricingOptions local_options = options;
     local_options.labeling.use_cuts = options.use_cuts;
+    local_options.labeling.dominance_support_types.clear();
+    for (std::size_t i = 0; i < master.dual_branch_a.size() && i < master.car_types.size(); ++i) {
+        if (std::abs(master.dual_branch_a[i]) > local_options.labeling.eps) {
+            local_options.labeling.dominance_support_types.push_back(master.car_types[i]);
+        }
+    }
 
     for (DeckMode deck : compartment_deck_order()) {
         if (deadline_reached(options.labeling.deadline)) {

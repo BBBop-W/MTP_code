@@ -231,11 +231,10 @@ CompartmentMipResult solve_compartment_mip(
     for (std::size_t interval = 0; interval < resource.capacities.size(); ++interval) {
         GRBLinExpr usage = 0.0;
         for (int i = 0; i < n; ++i) {
-            const double unit = master.car_lengths[static_cast<std::size_t>(i)] + resource.delta;
             const auto& choices = resource.choices_by_type[static_cast<std::size_t>(i)];
             for (std::size_t k = 0; k < choices.size(); ++k) {
                 if (choice_hits_interval(choices[k], static_cast<int>(interval))) {
-                    usage += unit * x[static_cast<std::size_t>(i)][k];
+                    usage += choices[k].resource_length * x[static_cast<std::size_t>(i)][k];
                 }
             }
         }
@@ -345,11 +344,10 @@ void add_resource_constraints(
     for (std::size_t interval = 0; interval < resource.capacities.size(); ++interval) {
         GRBLinExpr usage = 0.0;
         for (std::size_t i = 0; i < master.car_types.size(); ++i) {
-            const double unit = master.car_lengths[i] + resource.delta;
             const auto& choices = resource.choices_by_type[i];
             for (std::size_t k = 0; k < choices.size(); ++k) {
                 if (choice_hits_interval(choices[k], static_cast<int>(interval))) {
-                    usage += unit * x[i][k];
+                    usage += choices[k].resource_length * x[i][k];
                 }
             }
         }

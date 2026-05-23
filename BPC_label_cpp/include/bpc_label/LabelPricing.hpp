@@ -48,28 +48,38 @@ struct LabelingOptions {
     bool use_cuts = false;
     bool use_rc_bound = true;
     bool use_height_order = true;
-    bool use_local_residual_skyline = true;
+    bool use_local_d1_pruning = true;
     std::string residual_profile_mode = "full";
     std::string profile_generator_mode = "hyb";
+    std::string order_dominance_scope = "profile";
     int max_units_per_type = Config::max_units_per_compartment;
+    double component_length_perturbation_min_mm = 50.0;
+    double component_length_perturbation_max_mm = 0.0;
+    int component_length_perturbation_type_period = 2;
     std::vector<int> dominance_support_types;
     double eps = Config::eps;
     double deadline = 0.0;
 };
 
 struct LabelingStats {
+    std::size_t labels_generated_raw = 0;
     std::size_t labels_feasible = 0;
     std::size_t labels_pruned_by_bound = 0;
     std::size_t labels_pruned_by_dominance = 0;
-    std::size_t labels_pruned_by_local_skyline = 0;
+    std::size_t labels_pruned_by_order = 0;
     std::size_t labels_after_dominance = 0;
-    std::size_t reachability_probes = 0;
+    std::size_t placements_skipped_by_order = 0;
+    std::size_t labels_avoided_by_order = 0;
 };
 
 struct PlacementChoice {
     std::string side;
     int block = 0;
+    // Resource consumption in every region containing this component: l_i^h + Delta.
+    double resource_length = 0.0;
     std::vector<int> hits;
+    double height_limit = 0.0;
+    double component_capacity = 0.0;
 };
 
 struct ResourceModel {
@@ -77,6 +87,7 @@ struct ResourceModel {
     std::vector<std::array<double, 3>> intervals;
     std::vector<std::vector<PlacementChoice>> choices_by_type;
     double delta = Config::safety_clearance_delta;
+    int full_region_index = -1;
 };
 
 struct ResidualLabel {
@@ -85,6 +96,8 @@ struct ResidualLabel {
     std::vector<int> quantities;
     double total_length = 0.0;
     std::vector<double> residual;
+    // Generation-only state for D2/D3: future ordered choices must contain these regions.
+    std::vector<int> required_hits;
 };
 
 struct CompartmentPattern {

@@ -9,7 +9,7 @@ Implemented core modules:
 - dynamic segmentation: mirrors `src/utility/dynamic_segmentation.py`,
   including independent height-based splits and fixed side-block splits.
 - residual-profile label pricing: `EX`, `GR`, and `HYB` profile generators,
-  reduced-cost bound, local residual skyline, and residual/quantity dominance.
+  reduced-cost bound, and D1 residual/quantity dominance.
 - solver pricing: Gurobi MIP subproblems for both compartment BPC and full-wagon
   BPC. The wagon solver backend uses one full pricing MIP with binary `z_p`
   variables to choose the deck mode and load upper/lower components jointly.
@@ -28,8 +28,13 @@ Main solver options:
 
 - `--method wagon|compartment`
 - `--pricing-backend label|solver`
-- `--profile-generator-mode ex|gr|hyb` for the label backend
+- `--profile-generator-mode ex|gr|hyb|d2` for the label backend
+- `--order-dominance-scope profile|rho_h` to choose conservative
+  profile-wise ordered dominance or the paper-style full-compartment
+  residual test
 - `--num-splits N --independent-mode-split true|false`
+- `--component-length-perturbation-mm MM` for deterministic label-pricing
+  tests with component-dependent loading lengths on a subset of car types
 - `--warmstart-json PREFIX:PATH`
 
 Build:
